@@ -76,8 +76,14 @@ Phase reports live in `docs/PHASE_N.md`.
   still unconfirmed whether that is a dump of their own console. It stays
   outside the repo; never copy or commit BIOS files.
 - Q1.4 WSL2 install in progress on the user's side (reported 2026-10-27).
-- Q1.5 Which scenes are in NTSC savestate slots 1 and 2 (made 22:34–22:35
-  on 2026-10-27)?
+- Q1.6 Screen control: the computer-use tool only resolves apps from a
+  list read at session start, so it can't target the portable PCSX2 in
+  this session. A per-user Start-menu shortcut
+  `%APPDATA%\Microsoft\Windows\Start Menu\Programs\PCSX2 (clean profile).lnk`
+  was created (2026-10-27) so a new session can see it. Delete it when no
+  longer wanted.
+- Resolved Q1.5: NTSC slot 1 = in-engine cutscene (Ollivander dialogue),
+  slots 2 and 3 = gameplay in Ollivanders (from embedded screenshots).
 - Resolved: Q1.2 (0x70000–0x96000 is static: ≤23 of 38,912 words differ
   across three states); Q1.3 (pilot validated `gsdump_stats.py`, PHASE_1
   B2a).

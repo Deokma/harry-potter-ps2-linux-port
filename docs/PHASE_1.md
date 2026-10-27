@@ -390,6 +390,39 @@ GLES 3 GPU at 640×448 and 30 fps. The heavy items are:
 
 The scene runs will show whether gameplay is heavier.
 
+### B2b. N03: first gameplay area (Ollivanders), NTSC slot 3
+
+The first playable area, with Harry and Ollivander between shelves of
+individually drawn wand boxes. 4 dumps, 55 complete frames. The camera was
+still during capture, so p95 ≈ mean here.
+
+| Per frame | max | p95 | mean | vs cutscene (B2a, mean) |
+|---|---|---|---|---|
+| draw calls (est.) | 877 | 877 | 874 | **10×** (85) |
+| of which blended | 647 | 647 | 644 | 15× (44) |
+| vertices | 132,568 | 132,568 | 132,546 | 3.4× (38,778) |
+| primitives | 44,334 | 44,331 | 44,280 | 3.6× (12,253) |
+| fill, px (overdraw vs 640×448) | 2.96 M (10.3×) | 2.96 M (10.3×) | 2.95 M (10.3×) | 1.3× |
+| fill with blending, px | 1.74 M | 1.74 M | 1.73 M | 2.1× |
+| texture upload, bytes (count) | 1.06 M (108) | 1.06 M (108) | 1.06 M (108) | 1.1× |
+| CLUT loads | 1,072 | 1,072 | 1,072 | 4.7× |
+| unique texture+CLUT pairs (RGBA8 MB) | 88 (9.2) | 88 (9.2) | 88 (9.2) | |
+| GIF bytes | 7.56 M | 7.56 M | 7.56 M | 2.6× |
+| blends GLES can't express / readbacks | 0 / 0 | 0 / 0 | 0 / 0 | |
+
+Same render setup as the cutscene: 640×448 CT32 + Z24 main target,
+512×448 CT16 display buffer, two 256×256 CT16 + Z16 side targets. Pacing
+is 2 vsyncs per frame in the long dump. A few 1-vsync and 0-vsync frames
+appear right after short dumps start; each is a complete frame (≈44k
+primitives) finishing early after the dump-start stall, not a split.
+
+**What it means for the budget (still not a verdict):** gameplay brings
+the draw count close to 900 per frame (≈26k draws/s at 30 fps). That is
+the number Phase 2 test T1 (draw-call rate on the A53 + Mali driver) has
+to clear, unless the renderer batches across state changes far better
+than a straightforward translation. Fill (≈3 M px/frame, 1.7 M blended)
+and uploads (≈1 MB/frame) stay moderate.
+
 ### B3. Part C: verdict
 
 Measured numbers against the target (4× A53 @ 1.5 GHz, Mali-G31 MP2,
@@ -412,8 +445,11 @@ the day the device arrives.
    copied into `D:\ps2port-data\pcsx2-clean\bios\` (outside the repo).
    Whether it is a dump of your own console is still unconfirmed.
 2. ~~Pilot capture~~: done and validated (B2a).
-3. **Savestates** per SAVESTATES.md, then the per-scene runs. NTSC slots 1
-   and 2 already exist; which scenes are they?
+3. **Savestates** per SAVESTATES.md, then the per-scene runs. NTSC slot 1
+   is an in-engine cutscene (Ollivander dialogue), slots 2 and 3 are
+   gameplay in Ollivanders (identified from their embedded screenshots).
+   Slot 3 is measured (B2b, filed as N03; it was first filed under F01).
+   The FMV capture (F01) is still missing.
 4. The OSD numbers for the pilot weren't filed in `observations.md`. They
    aren't needed for the pilot (pacing comes from the dumps), but the EE
    sweep in the scene runs only exists as OSD readings.

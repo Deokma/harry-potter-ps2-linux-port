@@ -799,9 +799,17 @@ def main(argv=None):
         mode, frames = assemble(gs.chunks, args.vsyncs_per_frame)
         vsyncs = sum(ch.vsync for ch in gs.chunks)
         pacing = Counter(fr.c["vsyncs"] for fr in frames)
-        if pacing.get(0):
-            gs.warnings["frames with 0 vsyncs: boundary detection may "
-                        "split frames"] += pacing[0]
+        # A frame finishing within the same vsync as the previous one is a
+        # catch-up (common right after the dump starts and stalls the
+        # emulator); only a much smaller one hints at a split frame.
+        sizes = sorted(fr.c["prims"] for fr in frames)
+        median = sizes[len(sizes) // 2] if sizes else 0
+        for fr in frames:
+            if fr.c["vsyncs"] == 0:
+                kind = ("possible split frame (much less work than median)"
+                        if fr.c["prims"] < median / 4 else
+                        "catch-up frame finished within one vsync")
+                gs.warnings[kind] += 1
         dumps.append({"file": f.name, **info, "vsyncs": vsyncs,
                       "frames": len(frames), "frame_mode": mode,
                       "vsyncs_per_frame": dict(sorted(pacing.items())),
