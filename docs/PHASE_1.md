@@ -2,7 +2,8 @@
 
 Status: **Part A (static analysis) done. Part B (measurements) approved
 2026-10-27 with additions a–d; tooling validated on the pilot capture
-(B2a), waiting for the scene runs. Part C (verdict) not started.**
+(B2a); all NTSC scenes measured (B2b–B2h: N01–N03, I01, F01, A01); the PAL
+scenes S01–S08 wait for savestates. Part C (verdict) not started.**
 Primary disc: NTSC-U SLUS-20826. Secondary: PAL SLES-52055. The boot ELF is
 the same file on both.
 
@@ -423,6 +424,190 @@ to clear, unless the renderer batches across state changes far better
 than a straightforward translation. Fill (≈3 M px/frame, 1.7 M blended)
 and uploads (≈1 MB/frame) stay moderate.
 
+### B2c–B2h. NTSC scene runs (2026-10-27, clicks by Claude with your OK)
+
+All on the clean profile (Vulkan HW renderer, native, EE 100 %, MTVU off).
+OSD readings are in `D:\ps2port-data\reports\observations.md`, sampled
+about once a second.
+
+On reading the OSD: **FPS** counts game frames per host second, and
+**VPS** counts vsyncs per host second. A dip in FPS with VPS steady at
+59.9x and Speed 100 % is the game itself taking 3 or more vsyncs per frame.
+A dip together with VPS / Speed is a host hitch, and is ignored below.
+
+#### B2c. N01: Ollivander dialogue cutscene, NTSC slot 1
+
+6 dumps, 131 frames. The long dump runs from the dialogue close-ups into
+the wide establishing shot of the shop. The singles include that wide
+shot and the first gameplay frame (with the hint box).
+
+| Per frame | max | p95 | mean |
+|---|---|---|---|
+| vsyncs | 9 | 2 | 2.08 |
+| draws (est.) | 887 | 415 | 231 |
+| vertices | 135,144 | 66,886 | 45,359 |
+| fill, px (overdraw) | 3.54 M (12.3×) | 3.41 M (11.9×) | 2.32 M (8.1×) |
+| fill with blending, px | 1.93 M | 1.56 M | 0.98 M |
+| texture upload, bytes | 1.63 M | 1.63 M | 1.00 M |
+| unique texture+CLUT pairs | 93 | 71 | 54 |
+| blends GLES can't express / readbacks | 0 / 0 | 0 / 0 | 0 / 0 |
+
+Every frame longer than 2 vsyncs sits at a camera cut: black frames of 3
+and 9 vsyncs, then frames of 3 and 4 vsyncs while the new shot comes up.
+These are loads, not render cost. The heavy end (≈880 draws, 135k
+vertices) is the first gameplay frame, so the cutscene alone is lighter
+than gameplay.
+
+#### B2d. N02: gameplay, Harry alone in Ollivanders, NTSC slot 2
+
+4 dumps, 66 frames: a still long dump at the load point, plus singles
+after walking (W, D, D+W) to three other views.
+
+| Per frame | max | p95 | mean |
+|---|---|---|---|
+| vsyncs | 2 | 2 | 2.0 |
+| draws (est.) | 877 | 877 | 861 |
+| vertices | 132,532 | 132,532 | 131,145 |
+| fill, px (overdraw) | 3.85 M (13.4×) | 2.96 M (10.3×) | 2.97 M (10.4×) |
+| fill with blending, px | 2.34 M | 1.74 M | 1.75 M |
+| texture upload, bytes | 1.12 M | 1.06 M | 1.05 M |
+| unique texture+CLUT pairs (RGBA8 MB) | 88 (9.9) | 88 (9.2) | 87 (9.2) |
+| blends GLES can't express / readbacks | 0 / 0 | 0 / 0 | 0 / 0 |
+
+This is effectively the same room and camera as N03 (B2b), and the numbers
+match it closely. The views reached by walking were lighter on the OSD
+(230–440 PCSX2 draws, against ≈600 at the load point). So the load point
+is the heavy view of this room.
+
+#### B2e. I01: in-engine intro cutscene, Privet Drive (no savestate)
+
+This is an extra scene, not in SAVESTATES.md. It is the in-engine intro
+that plays after a fresh boot: the night sky, then the Privet Drive street
+with Dumbledore, McGonagall and Hagrid's motorbike, then close-ups. It's
+the only outdoor scene reachable without PAL savestates. 4 dumps, 80
+frames.
+
+| Per frame | max | p95 | mean |
+|---|---|---|---|
+| vsyncs | 3 | 3 | 2.96 |
+| draws (est.) | 784 | 784 | 551 |
+| vertices | 107,756 | 107,730 | 84,077 |
+| fill, px (overdraw) | 4.83 M (16.8×) | 3.05 M (10.6×) | 2.42 M (8.4×) |
+| fill with blending, px | 2.54 M | 1.29 M | 0.79 M |
+| texture upload, bytes (count) | 1.63 M (166) | 1.63 M (166) | 1.43 M (140) |
+| unique texture+CLUT pairs (RGBA8 MB) | 124 (9.8) | 124 (9.8) | 111 (9.0) |
+| blends GLES can't express / readbacks | 0 / 0 | 0 / 0 | 0 / 0 |
+
+**The stock game drops to 20 fps here.**
+- All 77 frames of the long dump (the street shot) take 3 vsyncs.
+- An OSD check on a second boot, with no dump running, confirmed it: the
+  street shot reads 19.98 FPS for about 5 s (VPS 59.9x, Speed 100 %), and
+  the close-ups after it are back at 29.97.
+
+The fill maximum (4.83 M px, 16.8×) is a single of the Dumbledore
+close-up, where layered hair and beard cover the screen. It is not the
+street shot.
+
+The slowdown is not GS-bound in this measurement:
+- I01 has fewer draws and vertices than N02/N03, which hold 30 fps.
+- PCSX2 doesn't charge GS rasterisation time to the emulated machine.
+
+So in PCSX2's timing model the extra time is EE/VU-side work, most likely
+outdoor scene logic and three animated characters. Two consequences:
+- A port that matches the original pacing can run this shot at 20 fps.
+- The heaviest EE frames need more than 2 vsyncs (33 ms) of R5900 time
+  even on the PS2 (as modelled), which matters for the EE budget in
+  Part C.
+
+#### B2f. F01: FMV
+
+3 dumps, 74 frames:
+- the main menu, which is a 24 fps PSS movie with the menu drawn over it
+  (long dump and one single);
+- the EA logo movie (one single). The first boot's EA logo ended before a
+  dump could be taken, so it was caught on the second boot.
+
+| Per frame | max | p95 | mean |
+|---|---|---|---|
+| vsyncs | 3 | 3 | 2.47 (2/3 alternating: 24 fps at 59.94 Hz) |
+| draws (est.) | 9 | 9 | 9 |
+| texture upload, bytes | 1.42 M | 1.42 M | 1.38 M |
+| fill, px | 1.26 M | 1.26 M | 1.23 M |
+
+On the GS side the FMV is one decoded frame uploaded per movie frame
+(≈1.4 MB) and a handful of sprites. The cost is in the MPEG-2 decode
+(A9), not the renderer.
+
+#### B2g. EE Cycle Rate sweep (N01–N03)
+
+Lowest game-side FPS in a ~10–18 s window after reloading the state.
+Host hitches (where VPS and Speed dip too) are excluded.
+
+| Scene | 100 % | 75 % | 60 % | 50 % |
+|---|---|---|---|---|
+| N01 cutscene → gameplay | 29.93 | 29.9 | 27.97 (one sample, at the cut into gameplay) | 27.9 ×3 in dialogue, 19.98 at the cut |
+| N02 gameplay | 29.96 | 29.97 | 29.96 | **19.98** in 6 of 11 samples |
+| N03 gameplay | 29.96 | 29.96 | 29.96 | **17.98–19.98** in 5 of 10 samples |
+| I01 intro street shot | **19.98** (stock) | – | – | – |
+
+How to read it (coarse, per D1.7):
+- In the Ollivanders gameplay scenes the EE holds 30 fps at 60 % and fails
+  at 50 %. EE busy time is therefore roughly **50–60 % of a 2-vsync frame**
+  there (≈ 17–20 ms of 33 ms), with wide error bars.
+- The I01 street shot exceeds 100 % at stock.
+- Both numbers come from PCSX2's EE timing model, not the hardware. The
+  Phase 3 instruction counts replace them.
+
+#### B2h. A01: disc streaming
+
+The run: boot, load NTSC slot 1, then about 108 s of dialogue cutscene,
+gameplay with tutorial hints, and walking. `EmuCore.CdvdVerboseReads` was
+on. The log was mapped to files by the new `scripts/cdvd_reads.py`
+through `layout.tsv`. Output: `D:\ps2port-data\reports\A01_reads.json`.
+
+| File | Reads | MB | Rate while active |
+|---|---|---|---|
+| `/RESOURCE/DAY/DAY0.HOG` | 250 | 8.47 | 44–66 kB/s steady, plus one 727 kB/s burst at the cut into gameplay |
+| `/CUT/HPM04A.HOG` | 20 | 0.68 | ≈ 76 kB/s, during the dialogue only |
+| `/RESOURCE/REMEMBER.HOG` | 1 | 0.03 | menu open |
+
+Findings:
+- **The mean after the state load is 85 kB/s.** Reads are regular
+  ~34 KB chunks.
+- Reading stops for ~20 s while a hint or menu is up.
+- A steady ~44–66 kB/s matches one stereo PS-ADPCM stream (≈ 50 kB/s at
+  44.1 kHz). So the "streaming" is audio coming out of the level's `.HOG`
+  and the cutscene's `/CUT/*.HOG`, not separate audio files.
+- That rate is trivial for an SD card. The work in reimplementing
+  `STREAM.IRX` is its protocol (A7), not bandwidth.
+- Boot itself reads the IRX modules, `FRONTEND.HOG` and `STARTUP.HOG`. The
+  ELF and `IOPRP270.IMG` don't appear in the log, probably because fast
+  boot loads them without CDVD reads.
+
+#### Cross-scene view so far (per frame)
+
+| Scene | vsyncs max | draws max / p95 | vertices max / p95 | fill max (overdraw) | upload max | uniq tex+CLUT max |
+|---|---|---|---|---|---|---|
+| PILOT cutscene | 2 | 184 / 184 | 78k / 77k | 2.61 M (9.1×) | 1.53 MB | 89 |
+| N01 cutscene | 9 (cuts) | 887 / 415 | 135k / 67k | 3.54 M (12.3×) | 1.63 MB | 93 |
+| N02 gameplay | 2 | 877 / 877 | 133k / 133k | 3.85 M (13.4×) | 1.12 MB | 88 |
+| N03 gameplay | 2 | 877 / 877 | 133k / 133k | 2.96 M (10.3×) | 1.06 MB | 88 |
+| I01 outdoor intro | 3 (**20 fps**) | 784 / 784 | 108k / 108k | 4.83 M (16.8×) | 1.63 MB | 124 |
+| F01 FMV | 3 (24 fps film) | 9 / 9 | 0.9k | 1.26 M | 1.42 MB | 5 |
+
+Across every NTSC scene the render setup is the same:
+- 640×448 CT32 + Z24 main target, 512×448 CT16 display;
+- one or two 256×256 CT16 side targets;
+- no blends GLES can't express, no readbacks, no local copies.
+
+The worst cases for Part C so far:
+- ≈ 890 draws, 135k vertices, 4.8 M px fill and 1.6 MB of uploads per
+  frame (each from a different scene);
+- EE ≈ 50–60 % in gameplay, and above 100 % in the I01 street shot.
+
+The PAL scenes (S01–S08: large outdoor areas, flying, Quidditch, effects)
+are still missing and are expected to be heavier.
+
 ### B3. Part C: verdict
 
 Measured numbers against the target (4× A53 @ 1.5 GHz, Mali-G31 MP2,
@@ -448,8 +633,10 @@ the day the device arrives.
 3. **Savestates** per SAVESTATES.md, then the per-scene runs. NTSC slot 1
    is an in-engine cutscene (Ollivander dialogue), slots 2 and 3 are
    gameplay in Ollivanders (identified from their embedded screenshots).
-   Slot 3 is measured (B2b, filed as N03; it was first filed under F01).
-   The FMV capture (F01) is still missing.
+   All three NTSC slots, the FMV (F01), an extra intro scene (I01) and the
+   streaming run (A01) are measured (B2b–B2h). **The PAL slots S01–S08 are
+   still needed** for the large outdoor, flying, Quidditch and effects
+   scenes.
 4. The OSD numbers for the pilot weren't filed in `observations.md`. They
-   aren't needed for the pilot (pacing comes from the dumps), but the EE
-   sweep in the scene runs only exists as OSD readings.
+   aren't needed for the pilot (pacing comes from the dumps). The EE sweep
+   for N01–N03 is filed.

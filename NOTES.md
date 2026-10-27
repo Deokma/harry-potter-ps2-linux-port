@@ -3,54 +3,77 @@
 Running log: decisions, open questions, commands that worked.
 Phase reports live in `docs/PHASE_N.md`.
 
-## Current state and handoff (updated 2026-10-27 23:05)
+## Current state and handoff (updated 2026-10-27 23:55)
 
 **Where we are:**
 - Phase 0 done (`docs/PHASE_0.md`).
 - Phase 1 Part A (static analysis) done.
-- Phase 1 Part B (PCSX2 measurements) is in progress: plan approved with
-  the user's additions a–d (`docs/PHASE_1.md` §B).
+- Phase 1 Part B (PCSX2 measurements): **every NTSC scene is measured**
+  (`docs/PHASE_1.md` §B2a–B2h, with a cross-scene table at the end of
+  B2h). The PAL scenes S01–S08 are the only ones left. They need
+  savestates the user makes (`docs/SAVESTATES.md`).
 - Phase 1 Part C (the go / no-go verdict) not started.
 - **Stop at the end of Phase 1** and wait for the user's go-ahead before
   Phase 2.
 
-**The next session takes over the measurement clicks (user's request):**
-1. The user agreed to screen control for this. Get access with
-   `request_access(["PCSX2 (clean profile)"])` (Start-menu shortcut to
-   `D:\ps2port-data\pcsx2-clean\pcsx2-qt.exe`).
-   - The portable PCSX2 is not resolvable under any other name.
-   - If access fails, stop and ask. **Do not** fall back to scripted
-     keystrokes (SendKeys / SendInput) without the user's explicit OK:
-     that skips the consent prompt.
-2. Follow `docs/MEASURE_RUNBOOK.md` per scene:
-   - load the slot (F2 / F3), read the OSD (FPS / VPS / Speed);
-   - **hold Ctrl+Shift+F8 ~5 s** (multi-frame GS dump, records while
-     held), then **Shift+F8 ×3** (single-frame dumps);
-   - EE Cycle Rate sweep 75 / 60 / 50 % (Settings → Emulation; reload the
-     state each time; read the lowest FPS), then set it back to 100 %;
-   - `python -I scripts/file_dumps.py <ID>`;
-   - fill in `D:\ps2port-data\reports\observations.md`.
-3. Analyse each scene:
-   - `python -I scripts/gsdump_stats.py D:/ps2port-data/snapshots/<ID> --scene <ID>`;
-   - `inspect_savestate.py` on its savestate;
-   - add the results to `docs/PHASE_1.md` (like §B2a / §B2b), then commit.
+**Next steps:**
+1. Ask the user for the PAL savestates S01–S08 (or whether to write Part C
+   on the NTSC data alone).
+2. With savestates, run the same per-scene routine as for N01–N03 (below).
+   The PAL disc is `private\pcsx2\Game\HarryPotter.chd`; its slots are
+   numbered separately from NTSC.
+3. Part C: the verdict in `docs/PHASE_1.md` §B3. Then stop.
+
+**Per-scene routine (what worked on 2026-10-27, Claude doing the clicks):**
+- Screen control is agreed **only** via
+  `request_access(["PCSX2 (clean profile)"])`. If it fails, stop and ask.
+  Never fall back to SendKeys / SendInput.
+- Load: F2 (the slot selector shows the slot), then F3. Read the OSD.
+- Dumps: hold Ctrl+Shift+F8 for 5 s, then Shift+F8 ×3 at different views.
+  Walk with W/A/S/D (`hold_key`, 2–3 s) between the singles.
+- EE sweep, repeated for 75 / 60 / 50 %, then back to 100 %:
+  1. F11 (pause).
+  2. Click the Settings window, open the EE Cycle Rate dropdown, pick the
+     value.
+  3. Click the game title bar, F11 (resume), F3 (reload).
+  4. Zoom on the OSD FPS line once a second for 10–18 s.
+  5. The OSD shows `CR=-1/-2/-3` while underclocked.
+- `python -I scripts/file_dumps.py <ID>`, then `gsdump_stats.py`, then fill
+  in `observations.md`. Then add a §B2x to PHASE_1 and commit.
 
 **Scene status:**
 
 | ID | Source | Status |
 |---|---|---|
 | PILOT | NTSC cutscene (Harry / Quirrell), no slot | measured (§B2a) |
-| N01 | NTSC slot 1: cutscene, Ollivander dialogue | to measure |
-| N02 | NTSC slot 2: gameplay, Ollivanders, Harry alone | to measure |
-| N03 | NTSC slot 3: gameplay, Ollivanders + Ollivander | dumps measured (§B2b); OSD + EE sweep missing |
-| F01 | NTSC fresh boot, EA logo / intro movie | to capture (an earlier "F01" folder was gameplay and is now N03) |
+| N01 | NTSC slot 1: cutscene, Ollivander dialogue | measured + EE sweep (§B2c, B2g) |
+| N02 | NTSC slot 2: gameplay, Ollivanders, Harry alone | measured + EE sweep (§B2d, B2g) |
+| N03 | NTSC slot 3: gameplay, Ollivanders + Ollivander | measured + EE sweep (§B2b, B2g) |
+| I01 | NTSC fresh boot: in-engine intro, Privet Drive (extra, no slot) | measured (§B2e); **stock game runs at 20 fps in the street shot** |
+| F01 | NTSC fresh boot: main-menu FMV + EA logo | measured (§B2f) |
+| A01 | NTSC slot 1, 108 s with verbose disc reads | measured (§B2h), `reports/A01_reads.json` |
 | S01–S08 | PAL slots 1–8 | need savestates from the user first (`docs/SAVESTATES.md`) |
 
 **Known quirks:**
-- PCSX2 must be the **clean profile** (patches off, EE 100 %). PCSX2 may
-  already be running with the NTSC disc.
+- PCSX2 must be the **clean profile** (patches off, EE 100 %).
+  `EECycleRate = 0` and `CdvdVerboseReads = false` were checked in the ini
+  at the end of the 2026-10-27 run. Savestate backup:
+  `D:\ps2port-data\savestates\backup-2026-10-27\`.
 - The clean profile uses the bundle's SCPH-50004 EUR BIOS. Whether it is a
   dump of the user's own console is still unconfirmed.
+- Screen-control mechanics (PCSX2 opens on monitor "P24FBA-RAGL"):
+  - **While the VM runs, mouse clicks on PCSX2 windows (menus, Settings)
+    are ignored.** Pause with F11 first. Hotkeys still work.
+  - **Pad keys need a hold of ≥ 0.2 s.** A bare key tap can be missed by
+    the game's pad polling.
+  - `hold_key` takes one chord, so you can't walk during a multi-frame
+    dump.
+  - Window drags that end over the desktop are refused. Keep the Settings
+    window overlapping the game window and switch focus by clicking each
+    one's visible part.
+  - After a menu click, click the game title bar before pressing pad keys.
+  - Don't click inside the game image: the mouse is bound to the right
+    stick and the left button is Square.
 
 ## Hard rules (from the brief)
 
@@ -107,7 +130,9 @@ Phase reports live in `docs/PHASE_N.md`.
   `/ps2port-data/` in case it's ever linked in. Nothing large goes to C:.
 - **D1.4 The user does every PCSX2 click; no screen control** (user
   decision). Steps live in `docs/MEASURE_RUNBOOK.md`; files are read
-  straight from `D:\ps2port-data`.
+  straight from `D:\ps2port-data`. *Superseded 2026-10-27 (late):* the
+  user agreed to screen control through the "PCSX2 (clean profile)" app
+  only, and Claude ran the N01–N03 / I01 / F01 / A01 sessions.
 - **D1.5 Measurement savestates only from the clean profile.** The bundle's
   "50 FPS" patch writes game RAM (`0x3A4FD8`), and a savestate would carry
   that value with patches off.
@@ -117,6 +142,11 @@ Phase reports live in `docs/PHASE_N.md`.
 - **D1.7 Report max and p95 per scene**, not just means (user addition a);
   the EE Cycle Rate sweep is only a coarse proxy, to be cross-checked with
   prototype instruction counts in Phase 3 (user addition d).
+- **D1.8 Extra scene I01** (Claude, 2026-10-27): the in-engine intro after
+  a fresh boot (Privet Drive street). It was captured because it is the
+  only outdoor scene reachable without PAL savestates. It has no savestate,
+  so no EE sweep. F01 covers the main-menu FMV and the EA logo, the two
+  movies the boot shows.
 
 ## Open questions
 
@@ -169,8 +199,28 @@ Phase reports live in `docs/PHASE_N.md`.
 - GS dump size: a ~3 s multi-frame dump of a cutscene was 93 MB zstd,
   parsed in ~20 s.
 - `EmuCore.CdvdVerboseReads = true` makes PCSX2 log every disc read as
-  `DvdRead: Reading Sector NNNNNNN (NNN Blocks of Size 2048) …` via
-  `Console.WriteLn` (goes to emulog with timestamps).
+  `DvdRead: Reading Sector NNNNNNN (NNN Blocks of Size 2064) …` via
+  `Console.WriteLn` (goes to emulog with timestamps). 2064 is the raw DVD
+  block; the user data is 2048.
+- Boot order (NTSC, fast boot):
+  1. language select;
+  2. EA logo, a 24 fps movie;
+  3. WB logo, in-engine;
+  4. a loading screen;
+  5. the in-engine intro (I01);
+  6. the main menu, which is a 24 fps PSS movie with the menu drawn over
+     it.
+- The OSD's "DRW" (PCSX2's own HW draws) isn't the same count as
+  `gsdump_stats.py` "draws" (state-change runs). Compare like with like.
+- A 5 s Ctrl+Shift+F8 hold records ~130–230 vsyncs (60–80 frames), not
+  300. Recording slows the host, and capture starts late.
+- In this game's gameplay, EE time is roughly 50–60 % of a 2-vsync frame
+  (EE sweep: 30 fps at 60 %, 20 fps at 50 %). The I01 street shot is
+  already at 20 fps at 100 % (PHASE_1 B2g).
+- Streaming: about 44–66 kB/s steady from the level `.HOG` and the
+  `/CUT/*.HOG` cutscene archive, which looks like one stereo ADPCM stream.
+  The mean is 85 kB/s, with bursts of about 0.7 MB/s at scene changes
+  (PHASE_1 B2h).
 
 ## Commands that worked
 
@@ -199,4 +249,8 @@ python -I scripts/pcsx2_set.py EmuCore.CdvdVerboseReads=true   # PCSX2 closed
 python -I scripts/file_dumps.py S02              # file new dumps under snapshots\S02
 python -I scripts/gsdump_stats.py D:/ps2port-data/snapshots/S02 --scene S02
 python -I tests/test_gsdump_stats.py             # parser self-test
+# disc reads (CdvdVerboseReads log) per file and per 5 s window
+python -I scripts/cdvd_reads.py D:/ps2port-data/reports/A01_emulog.txt \
+    private/extract/SLUS-20826/layout.tsv --after "Loaded state from slot 1" \
+    --json D:/ps2port-data/reports/A01_reads.json
 ```
