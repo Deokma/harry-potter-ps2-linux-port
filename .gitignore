@@ -3,8 +3,10 @@
 # lives in ./private/, which is ignored as a whole.
 /private/
 
-# The local game / PCSX2 bundle folder sitting next to the repo.
-/Harry Potter*/
+# Large local data (savestates, GS dumps, the clean PCSX2 profile) lives
+# OUTSIDE the repo in D:\ps2port-data\, where git cannot see it. If it is
+# ever linked into the repo, keep it ignored:
+/ps2port-data/
 
 # Disc images (character classes so this also holds on case-sensitive git)
 *.[iI][sS][oO]
