@@ -1,0 +1,4 @@
+# Scripts run under WSL/Linux and on the device: keep LF everywhere.
+* text=auto eol=lf
+*.png binary
+*.jpg binary

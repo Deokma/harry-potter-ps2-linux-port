@@ -1,0 +1,48 @@
+# --- Game data: NEVER commit (hard project rule) -------------------------
+# Everything copyrighted (disc images, ELFs, BIOS, extracted assets, dumps)
+# lives in ./private/, which is ignored as a whole.
+/private/
+
+# The local game / PCSX2 bundle folder sitting next to the repo.
+/Harry Potter*/
+
+# Disc images (character classes so this also holds on case-sensitive git)
+*.[iI][sS][oO]
+*.[cC][hH][dD]
+*.[cC][sS][oO]
+*.[zZ][sS][oO]
+*.[gG][zZ]
+*.[mM][dD][fF]
+*.[mM][dD][sS]
+*.[nN][rR][gG]
+*.[iI][mM][gG]
+*.[bB][iI][nN]
+*.[cC][uU][eE]
+
+# Executables / modules pulled off the disc
+*.[eE][lL][fF]
+*.[iI][rR][xX]
+# Boot ELFs are named like SLES_520.55 / SLUS_209.07 (no extension)
+[sS][cClL][a-zA-Z][a-zA-Z]_[0-9][0-9][0-9].[0-9][0-9]*
+
+# BIOS dumps and their companion files
+*.[rR][oO][mM]
+*.[rR][oO][mM][0-9]
+*.[eE][rR][oO][mM]
+*.[nN][vV][mM]
+*.[mM][eE][cC]
+
+# PCSX2 artefacts (memcards, savestates, GS dumps)
+*.ps2
+*.p2s
+*.p2s.backup
+*.gs
+*.gs.xz
+*.gs.zst
+
+# --- Local config / build output ---------------------------------------------
+.env
+build/
+out/
+__pycache__/
+*.pyc
