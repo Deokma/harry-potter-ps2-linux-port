@@ -52,22 +52,34 @@ Phase reports live in `docs/PHASE_N.md`.
   `analyze_irx.py`, `scan_code_in_data.py`, `inspect_savestate.py`): enough
   for a census and estimates without installing Ghidra/rabbitizer. Phase 3
   will need a real R5900 decoder; evaluate existing ones then.
+- **D1.3 Bulk data lives in `D:\ps2port-data\`** (user decision): clean
+  PCSX2 profile, savestates, GS dumps/screenshots, memcard copies, logs,
+  reports. It is outside the repo (git can't see it); `.gitignore` lists
+  `/ps2port-data/` in case it's ever linked in. Nothing large goes to C:.
+- **D1.4 The user does every PCSX2 click; no screen control** (user
+  decision). Steps live in `docs/MEASURE_RUNBOOK.md`; files are read
+  straight from `D:\ps2port-data`.
+- **D1.5 Measurement savestates only from the clean profile.** The bundle's
+  "50 FPS" patch writes game RAM (`0x3A4FD8`), and a savestate would carry
+  that value with patches off.
+- **D1.6 Disc and bundle moved into `private/`** (user OK):
+  `private/disc/SLUS-20826.iso`, `private/pcsx2/` (relative paths in its
+  ini, so it still works).
+- **D1.7 Report max and p95 per scene**, not just means (user addition a);
+  the EE Cycle Rate sweep is only a coarse proxy, to be cross-checked with
+  prototype instruction counts in Phase 3 (user addition d).
 
 ## Open questions
 
-- Q0.2 Move the ISO and the PCSX2 bundle folder into `./private/`? Both are
-  git-ignored where they are now. (No answer yet; left in place.)
-- Q0.3 BIOS for PCSX2 profiling: the bundle has an SCPH-50004 (EUR v1.90)
-  BIOS in `Engine/bios`. I have not read, copied or hashed it. Per the rules
-  it must be a dump from the user's own console; needs confirmation
-  before any PCSX2 run.
-- Q0.4 The bundle's per-game settings enable "Widescreen 16:9" and
-  "50 FPS" patches for SLES-52055. Phase 1 profiling uses a separate clean
-  profile with patches off (PHASE_1.md B0).
-- Q1.1 Approval of the Phase 1 measurement plan (PHASE_1.md Part B) and
-  savestates for the listed scenes.
+- Q0.3 BIOS: the user's reply came through as the unfilled template, so
+  it's still unconfirmed whether the bundle's SCPH-50004 is their own dump.
+  The clean profile has no BIOS configured; the user selects one in
+  Settings > BIOS. Never copy BIOS files.
 - Q1.2 What exactly is resident at EE 0x80000–0x95060 (likely EELOAD
   leftovers)? Check that it is unchanged across savestates.
+- Q1.3 Pilot capture pending: validates `gsdump_stats.py` on a real dump
+  (it has only passed the synthetic self-test so far).
+- Q1.4 WSL2 install in progress on the user's side (reported 2026-10-27).
 
 ## Facts worth remembering (verified)
 
@@ -79,15 +91,29 @@ Phase reports live in `docs/PHASE_N.md`.
   "50 FPS" pnach.
 - PCSX2 2.6.3 savestates are zips with zstd members; Python 3.14's
   `zipfile` reads them directly.
+- The user's bundle ran with EE cycle rate 130 % (`EECycleRate = 1`) and
+  MTVU on; the clean profile uses 100 % and MTVU off.
+- PCSX2 2.6.3 hotkeys (source-checked): `GSDumpSingleFrame` fires on key
+  release, 1 frame; `GSDumpMultiFrame` records while held and stops on
+  release. Dumps and screenshots go to the Snapshots folder.
+- GS dump format (v2.6.3): u32 0xFFFFFFFF, u32 header size, 9×u32
+  GSDumpHeader, serial, screenshot, GS freeze data (u32 version, 15 env
+  u64s, 2×12 context u64s at offset 124, …, 4 MiB VRAM, 4×(GIFTag + u32
+  reg), f32 q), 8 KiB privileged regs; packets 0 = transfer (u8 path,
+  u32 size), 1 = vsync (u8 field), 2 = FIFO read (u32), 3 = priv regs.
+  Path index 0 (old PATH1) carries VU1 memory up to its end after EOP.
+- `EmuCore.CdvdVerboseReads = true` makes PCSX2 log every disc read as
+  `DvdRead: Reading Sector NNNNNNN (NNN Blocks of Size 2048) …` via
+  `Console.WriteLn` (goes to emulog with timestamps).
 
 ## Commands that worked
 
 ```bash
 # Phase 0: disc inventory (ISO or CHD), output under private/extract/<SERIAL>/
-python -I scripts/extract_disc.py "Harry Potter and The Sorceror's Stone.iso" --hash
-python -I scripts/extract_disc.py "Harry Potter and the Philosopher's Stone/Game/HarryPotter.chd"
-# Full CHD integrity check (decodes all 4.7 GB in Python: slow)
-python -I scripts/extract_disc.py ".../HarryPotter.chd" --verify
+python -I scripts/extract_disc.py private/disc/SLUS-20826.iso --hash
+python -I scripts/extract_disc.py private/pcsx2/Game/HarryPotter.chd
+# Full CHD integrity check (decodes all 4.7 GB in Python: ~20 min)
+python -I scripts/extract_disc.py private/pcsx2/Game/HarryPotter.chd --verify
 # Extract more files by glob, or everything
 python -I scripts/extract_disc.py IMAGE --extract "/MOVIES/*" --extract "*.HOG"
 python -I scripts/extract_disc.py IMAGE --all
@@ -96,8 +122,15 @@ python -I scripts/extract_disc.py IMAGE --all
 python -I scripts/analyze_elf.py private/extract/SLUS-20826/files/SLUS_208.26
 python -I scripts/analyze_irx.py private/extract/SLUS-20826/files \
     --json private/analysis/SLUS_208.26/iop_modules.json
-python -I scripts/scan_code_in_data.py "Harry Potter and The Sorceror's Stone.iso" \
+python -I scripts/scan_code_in_data.py private/disc/SLUS-20826.iso \
     --json private/analysis/SLUS_208.26/code_in_data.json      # ~1 min
 python -I scripts/inspect_savestate.py STATE.p2s ELF \
-    --patches-zip ".../Engine/resources/patches.zip" --json OUT.json
+    --patches-zip private/pcsx2/Engine/resources/patches.zip --json OUT.json
+
+# Phase 1: measurement tooling
+python -I scripts/make_pcsx2_profile.py          # (re)build D:\ps2port-data\pcsx2-clean
+python -I scripts/pcsx2_set.py EmuCore.CdvdVerboseReads=true   # PCSX2 closed
+python -I scripts/file_dumps.py S02              # file new dumps under snapshots\S02
+python -I scripts/gsdump_stats.py D:/ps2port-data/snapshots/S02 --scene S02
+python -I tests/test_gsdump_stats.py             # parser self-test
 ```

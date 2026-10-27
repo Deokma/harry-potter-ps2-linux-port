@@ -1,7 +1,8 @@
 # Phase 1: Feasibility analysis
 
-Status: **Part A (static analysis) done. Part B (PCSX2 measurement plan)
-proposed, waiting for approval. Part C (verdict) not started.**
+Status: **Part A (static analysis) done. Part B (measurements) approved
+2026-10-27 with additions a–d; tooling ready, waiting for the pilot capture.
+Part C (verdict) not started.**
 Primary disc: NTSC-U SLUS-20826. Secondary: PAL SLES-52055. The boot ELF is
 the same file on both.
 
@@ -230,52 +231,90 @@ then loads `sio2man`, `padman`, `mcman`, `mcserv`, `libsd`, `sdrdrv` and
 | 6 | Memory (1 GB) | 32 MB EE + 4 MB VRAM + recompiled code + GL textures ≈ 200–300 MB | **low** |
 | 7 | Audio mixing / FMV | SPU2 mixing and SD MPEG-2 decode fit easily on one core | **low** |
 
-## Part B: measurement plan (proposed, needs your OK)
+## Part B: measurements (approved, with your additions a–d)
 
-**Goal:** per-scene numbers for GS, VU1, EE and audio at stock settings,
-which we then put against the device budget in Part C.
+**Goal:** per-scene GS, VU1, EE and audio numbers at stock settings, as
+max and p95 rather than averages, to set against the device budget in
+Part C. You do the clicks ([MEASURE_RUNBOOK.md](MEASURE_RUNBOOK.md)); I
+run the analysis.
 
-### B0. Clean PCSX2 profile (I set this up)
+### B0. Setup (done)
 
-- A separate portable copy of your PCSX2 2.6.3 program files in
-  `private/pcsx2-profile/`. Your bundle and its settings stay untouched.
-- **All patches off** (widescreen, 50 FPS), no cheats, default speed hacks,
-  EE cycle rate 100 %.
-- Vulkan hardware renderer at native resolution. OSD shows FPS, VPS, CPU and
-  GPU load, and GS statistics.
-- BIOS: the profile **points** at your BIOS file (once you confirm it's your
-  own dump); nothing is copied.
+- **Clean PCSX2 2.6.3 profile** at `D:\ps2port-data\pcsx2-clean\`, built by
+  `scripts/make_pcsx2_profile.py` from your bundle:
+  - program files only: no BIOS, no settings, no saves;
+  - your controls and hotkeys carried over;
+  - all patches / widescreen / cheats off, GameIndex fixes on;
+  - EE cycle rate 100 % (your bundle had 130 %), MTVU off;
+  - native resolution, OSD performance and GS stats on.
 
-### B1. Scenes (savestates, from you)
+  No BIOS is configured: you select your own dump in Settings > BIOS.
+- **Bulk data on D:** `D:\ps2port-data\{savestates,snapshots,memcards,logs,reports}`.
+  This is outside the repo, so git can't see it (`.gitignore` also lists
+  `/ps2port-data/` in case it is ever linked in). C: is not used.
+- The disc and bundle moved into `private/` (`private/disc/SLUS-20826.iso`,
+  `private/pcsx2/`).
 
-Per-frame workload is driven by the ELF, which is identical on both discs,
-so PAL savestates are fine for most scenes. Frame pacing differs (25 vs
-30 fps), and I'll scale for that. Ideally, 6–8 savestates:
+### B1. Scenes
 
-1. Main menu / frontend.
-2. A busy Hogwarts interior with several characters.
-3. The largest outdoor area (long view distance).
-4. A flying lesson or Quidditch match (probably the heaviest).
-5. A fight / boss / spell-heavy moment.
-6. An in-engine (non-FMV) cutscene.
-7. One or two of these on the **NTSC** disc too, to confirm PAL ≈ NTSC.
+Fixed in [SAVESTATES.md](SAVESTATES.md), all created in the clean profile:
+- PAL slots 1–8 (S01–S08): menu, busy interior, large outdoor area,
+  flying lesson, Quidditch, fight/boss, in-engine cutscene, your
+  worst-case pick;
+- NTSC slots 1–3 (N01–N03);
+- the FMV (F01) and a pilot capture, which need no savestate.
 
-Boot logos and the FMV need no savestate; I boot the disc.
+Savestates made with the bundle's PCSX2 are excluded: the 50 FPS patch
+writes into game RAM, and that value would be baked into the state.
 
-### B2. What I measure per scene
+### B2. Measurements
 
-| Measure | How | Feeds risk |
-|---|---|---|
-| FPS / VPS, i.e. confirm 30 fps NTSC (25 PAL) pacing | OSD | all |
-| GS per frame: primitives, vertices, state changes and estimated batched draw calls, render targets and their formats, texture uploads (bytes, PSMs, CLUT loads), blend / alpha-test / depth modes, render-to-texture use, **estimated pixels filled (overdraw)** | **GS dump** (PCSX2 multi-frame dump, ~10 frames) parsed by a new `scripts/gsdump_stats.py` | 1 |
-| VU1 load: GIF data volume per path (PATH1 = VU1, PATH3 = direct), vertices produced by VU1, × cycles per vertex from the microprogram's inner loop | GS dump + static VU1 analysis | 2 |
-| EE utilisation: lowest EE cycle rate (50 / 60 / 75 / 100 %) that still holds full frame rate | PCSX2 EE Cycle Rate sweep in the scene | 3 |
-| Self-modifying / dynamic code check, VU residency | `inspect_savestate.py` on each state | 3 |
-| Audio streaming rate and channel use | CDVD read activity during play (PCSX2 log) + STREAM RPC traffic | 4, 7 |
+| # | Measure | Source | Reported as |
+|---|---|---|---|
+| 1 | Frame pacing: FPS / VPS / speed at EE 100 % | OSD → `observations.md` | per scene |
+| 2 | **Fill / overdraw**: scissor-clipped area of every primitive, total and split by blending / texturing / depth test; overdraw = fill ÷ displayed area; **fill scaled to the 640×480 panel** | GS dumps → `gsdump_stats.py` | **max, p95**, mean per scene |
+| 3 | **Draw calls**: runs of primitives with unchanged draw state (prim class, attributes, FRAME/ZBUF/TEST/SCISSOR/FBA, TEX0/TEX1/CLAMP/TEXA if textured, ALPHA/PABE/COLCLAMP if blending, DTHE, FOGCOL); a transfer also ends a run. A lower bound on what a straightforward GLES renderer would issue | GS dumps | **max, p95** |
+| 4 | **Vertices** (XYZ writes) and primitives by type | GS dumps | **max, p95** |
+| 5 | **Texture upload bytes** (host→local IMAGE data), upload count, CLUT loads | GS dumps | **max, p95** |
+| 6 | **Display mode (b)**: circuit, interlace, frame vs field mode, display size, DISPFB format, per vsync | privileged registers in dumps | per scene, all values seen |
+| 7 | **Render targets and depth buffers (b)**: every FRAME base / width / format drawn to, its drawn extent, ZBUF base / format | GS dumps | per scene list; RT count and switches per frame |
+| 8 | **Blending GLES can't express (c)**: per draw, flags for `(1+C)` factor forms, C = Ad (dest alpha 0..0x80 needs ×2), FIX > 0x80, COLCLAMP wrap, PABE, AA1. C = As counts separately: exact only while As ≤ 0x80 (counted per prim for untextured draws; unknown for textured ones). Also destination-alpha test and partial AFAIL modes | GS dumps | count per frame, max/p95 |
+| 9 | **Framebuffer reads (c)**: draws texturing from the RT being drawn (feedback), from any other RT drawn so far in the dump (render-to-texture, incl. the previous frame), local→local copies, local→host readbacks and FIFO reads (CPU stalls on Mali) | GS dumps | count/bytes per frame, max/p95 |
+| 10 | **Texture+CLUT pairs (c)**: unique (TBP0, TBW, PSM, TW, TH [+ CBP, CPSM, CSA]) per frame, de-swizzled bytes native and as RGBA8 | GS dumps | max, p95 |
+| 11 | VU1 output: GIF bytes per path per frame (PATH1 = VU1 `XGKICK`) | GS dumps | max, p95; × cycles per vertex from the VU1 programs (static) |
+| 12 | **EE utilisation (d)**: lowest EE Cycle Rate (75 / 60 / 50 %) that still holds full FPS | OSD sweep → `observations.md` | **coarse proxy, wide error bars** (below) |
+| 13 | Self-modifying / dynamic code, VU residency | `inspect_savestate.py` on every savestate | per state |
+| 14 | Disc streaming rate and which files stream (optional A01 run) | `CdvdVerboseReads` log mapped through `layout.tsv` | MB/s, files |
 
-I drive PCSX2 myself (load the state, toggle settings, take dumps and OSD
-screenshots) through screen control. That needs you to allow access to
-PCSX2 when I start. You can also do the clicks yourself if you prefer.
+**Frames.** A frame is the work between two display flips (DISPFB base or
+offset change). Without flips, windows of 2 vsyncs are used (the game
+paces at 2 vsyncs per frame). Partial frames at the start and end of each
+dump are dropped. Each scene gets one ~5 s multi-frame dump (≈125–150
+frames, the source of p95) and three single-frame dumps at moments you
+judge heaviest (candidates for max).
+
+**On the EE sweep (d).** EE Cycle Rate scales emulated cycle accounting,
+not just CPU speed. The game needs PCSX2's `EETimingHack`, so it reacts to
+EE/DMA/interrupt timing, and an underclocked run can slow down for reasons
+that aren't pure CPU load. "Holds full FPS at 60 %" will therefore be read
+only as "EE busy roughly ≤ 60 %, give or take a wide margin", never as a
+precise budget. Phase 3 replaces this with instruction counts from the
+recompiled prototype (instructions executed per frame on the hot paths)
+and checks the two against each other.
+
+**Tool status.** `gsdump_stats.py` implements rows 2–11 from PCSX2 2.6.3's
+dump format (`GSDump.cpp`, `GSState::Freeze`) and passes a synthetic-dump
+self-test (`tests/test_gsdump_stats.py`). It has **not yet seen a real
+dump**: the pilot capture is there to catch format surprises before the
+scene runs.
+
+**Known approximations:**
+- Fill counts clipped geometry. It doesn't apply depth or alpha-test
+  rejection, so it overestimates written pixels, which is conservative.
+- The draw count models a renderer without reordering.
+- Texture/RT overlap is judged by GS memory page ranges, not exact
+  swizzled addresses.
+- Texture alpha above 0x80 can't be seen without decoding textures.
 
 ### B3. Part C: verdict
 
@@ -287,22 +326,17 @@ GLES 3.x, 1 GB shared):
 - memory;
 - audio.
 
-The result is **go / no-go / conditional-go** with ranked risks.
+The result is **go / no-go / conditional-go** with ranked risks. Without
+the device every A53/Mali number is an **extrapolation**, labelled with
+error bars. The on-device benchmarks that turn those into measurements
+are specified in [PHASE_2_DEVICE_BENCH.md](PHASE_2_DEVICE_BENCH.md), to run
+the day the device arrives.
 
-Being upfront about the limit: without the device, every A53 / Mali number
-is an **extrapolation**, not a measurement. The verdict will state its
-error bars. If it comes out "conditional", the condition will be a short
-on-device benchmark list for the first day the device exists (GLES draw-call
-and blending throughput, a recompiled-code microbenchmark). A cheap
-H616/H618 board (same CPU/GPU family as the H700) could serve as a proxy
-earlier, if you want one.
+## Open items
 
-## Open items for you
-
-1. **Approve Part B** as written, or adjust scenes / measurements.
-2. **BIOS**: confirm the SCPH-50004 in the bundle is a dump of your own
-   console (or give me the path to yours). Needed for anything that runs
-   PCSX2.
-3. **Savestates** for the scenes in B1 (PAL is fine), saved with the
-   bundle's PCSX2 (F1 = save to slot) or in the new profile. Tell me which
-   slot is which scene.
+1. **BIOS:** your answer came through as the template text
+   ("<EITHER … OR …>"), so it's still open. The clean profile has no BIOS
+   set; please select a dump of your own console in Settings > BIOS.
+2. **Pilot capture** (MEASURE_RUNBOOK.md §1). I'll validate the parser on
+   it before you do the scenes.
+3. **Savestates** per SAVESTATES.md, then the per-scene runs.

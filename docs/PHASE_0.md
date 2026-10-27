@@ -2,6 +2,10 @@
 
 Status: **done, waiting for go-ahead.** Date: 2026-10-27.
 
+> Update (Phase 1): both images have since moved into `private/`. The NTSC
+> ISO is now `private/disc/SLUS-20826.iso` and the PCSX2 bundle is
+> `private/pcsx2/`. Paths below are as they were during Phase 0.
+
 ## TL;DR
 
 - Two images of the game are on this machine: an **NTSC-U ISO (SLUS-20826)**

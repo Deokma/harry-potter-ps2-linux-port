@@ -111,6 +111,21 @@ def apply_overrides(lines, table):
     return "\n".join(out).rstrip("\n") + "\n"
 
 
+def read_value(ini_path, section, key):
+    """Value of key in [section] of an existing ini, or None."""
+    if not ini_path.exists():
+        return None
+    cur = None
+    for line in ini_path.read_text(encoding="utf-8").splitlines():
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            cur = s[1:-1]
+        elif cur == section and "=" in s and \
+                s.split("=", 1)[0].strip() == key:
+            return s.split("=", 1)[1].strip()
+    return None
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("--source", type=Path,
@@ -145,12 +160,18 @@ def main(argv=None):
         (args.data_root / sub).mkdir(parents=True, exist_ok=True)
 
     src_ini = args.source / "inis" / "PCSX2.ini"
+    dest_ini = args.dest / "inis" / "PCSX2.ini"
     lines = src_ini.read_text(encoding="utf-8").splitlines() \
         if src_ini.exists() else []
-    ini = apply_overrides(lines, overrides(args.data_root))
-    (args.dest / "inis").mkdir(exist_ok=True)
-    (args.dest / "inis" / "PCSX2.ini").write_text(ini, encoding="utf-8",
-                                                  newline="\r\n")
+    table = overrides(args.data_root)
+    # keep a BIOS the user already picked in this profile
+    for sec, key in (("Folders", "Bios"), ("Filenames", "BIOS")):
+        value = read_value(dest_ini, sec, key)
+        if value:
+            table[sec][key] = value
+    ini = apply_overrides(lines, table)
+    dest_ini.parent.mkdir(exist_ok=True)
+    dest_ini.write_text(ini, encoding="utf-8", newline="\r\n")
 
     cards = 0
     if args.memcards.is_dir() and \
@@ -161,7 +182,7 @@ def main(argv=None):
     print(f"profile : {args.dest} ({copied} files copied)")
     print(f"ini     : {args.dest / 'inis' / 'PCSX2.ini'}")
     print(f"data    : {args.data_root} (memcards copied: {cards})")
-    print("BIOS    : not configured; set it in Settings > BIOS")
+    print(f"BIOS    : {table['Filenames']['BIOS'] or 'not configured; set it in Settings > BIOS'}")
     return 0
 
 
