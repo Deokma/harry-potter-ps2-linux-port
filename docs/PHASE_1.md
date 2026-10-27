@@ -1,8 +1,8 @@
 # Phase 1: Feasibility analysis
 
 Status: **Part A (static analysis) done. Part B (measurements) approved
-2026-10-27 with additions a–d; tooling ready, waiting for the pilot capture.
-Part C (verdict) not started.**
+2026-10-27 with additions a–d; tooling validated on the pilot capture
+(B2a), waiting for the scene runs. Part C (verdict) not started.**
 Primary disc: NTSC-U SLUS-20826. Secondary: PAL SLES-52055. The boot ELF is
 the same file on both.
 
@@ -205,9 +205,18 @@ then loads `sio2man`, `padman`, `mcman`, `mcserv`, `libsd`, `sdrdrv` and
     there's **no dynamically loaded code**.
   - Low memory holds the EE kernel (0x0–0x1FFFF) and SDK kernel patches
     copied from the ELF's `.data` (0x70000–0x7FFFF). 0x80000–0x95060 looks
-    like boot-loader leftovers (178 of 242 code chunks are not in the ELF);
-    we'll confirm it never changes.
-  - Limit: one scene. Part B repeats this check on every new savestate.
+    like boot-loader leftovers (178 of 242 code chunks are not in the ELF).
+- **Two more savestates** (NTSC slots 1 and 2, clean profile, no patches):
+  - `.text`, `.vutext` and `.rodata` are **byte-identical to the ELF**
+    (0 differing words);
+  - no code above the ELF image;
+  - all 10 VU overlays resident.
+
+  Low memory 0x70000–0x96000 differs in only 16–23 of 38,912 words across
+  all three states (two discs, two profiles), so it is static and not
+  game-loaded code.
+- So far: **3 gameplay states, no self-modifying and no dynamically loaded
+  code**. Every new savestate gets the same check.
 
 ### A9. FMV and frame rate
 
@@ -272,7 +281,7 @@ writes into game RAM, and that value would be baked into the state.
 | # | Measure | Source | Reported as |
 |---|---|---|---|
 | 1 | Frame pacing: FPS / VPS / speed at EE 100 % | OSD → `observations.md` | per scene |
-| 2 | **Fill / overdraw**: scissor-clipped area of every primitive, total and split by blending / texturing / depth test; overdraw = fill ÷ displayed area; **fill scaled to the 640×480 panel** | GS dumps → `gsdump_stats.py` | **max, p95**, mean per scene |
+| 2 | **Fill / overdraw**: scissor-clipped area of every primitive, total, per render target, and split by blending / texturing / depth test; overdraw = fill ÷ the main render target's drawn area (the scene buffer, not the CRTC output); **fill scaled to the 640×480 panel** (fill × 640·480 ÷ main RT area) | GS dumps → `gsdump_stats.py` | **max, p95**, mean per scene |
 | 3 | **Draw calls**: runs of primitives with unchanged draw state (prim class, attributes, FRAME/ZBUF/TEST/SCISSOR/FBA, TEX0/TEX1/CLAMP/TEXA if textured, ALPHA/PABE/COLCLAMP if blending, DTHE, FOGCOL); a transfer also ends a run. A lower bound on what a straightforward GLES renderer would issue | GS dumps | **max, p95** |
 | 4 | **Vertices** (XYZ writes) and primitives by type | GS dumps | **max, p95** |
 | 5 | **Texture upload bytes** (host→local IMAGE data), upload count, CLUT loads | GS dumps | **max, p95** |
@@ -281,17 +290,19 @@ writes into game RAM, and that value would be baked into the state.
 | 8 | **Blending GLES can't express (c)**: per draw, flags for `(1+C)` factor forms, C = Ad (dest alpha 0..0x80 needs ×2), FIX > 0x80, COLCLAMP wrap, PABE, AA1. C = As counts separately: exact only while As ≤ 0x80 (counted per prim for untextured draws; unknown for textured ones). Also destination-alpha test and partial AFAIL modes | GS dumps | count per frame, max/p95 |
 | 9 | **Framebuffer reads (c)**: draws texturing from the RT being drawn (feedback), from any other RT drawn so far in the dump (render-to-texture, incl. the previous frame), local→local copies, local→host readbacks and FIFO reads (CPU stalls on Mali) | GS dumps | count/bytes per frame, max/p95 |
 | 10 | **Texture+CLUT pairs (c)**: unique (TBP0, TBW, PSM, TW, TH [+ CBP, CPSM, CSA]) per frame, de-swizzled bytes native and as RGBA8 | GS dumps | max, p95 |
-| 11 | VU1 output: GIF bytes per path per frame (PATH1 = VU1 `XGKICK`) | GS dumps | max, p95; × cycles per vertex from the VU1 programs (static) |
+| 11 | VU1 output: vertices and GIF bytes per frame. PCSX2 2.6.3 dumps don't record the GIF path (every transfer is logged as index 3), so the proxy is: all world geometry is VU1 output in this engine (A6), and uploads are the EE's | GS dumps | max, p95; × cycles per vertex from the VU1 programs (static) |
 | 12 | **EE utilisation (d)**: lowest EE Cycle Rate (75 / 60 / 50 %) that still holds full FPS | OSD sweep → `observations.md` | **coarse proxy, wide error bars** (below) |
 | 13 | Self-modifying / dynamic code, VU residency | `inspect_savestate.py` on every savestate | per state |
 | 14 | Disc streaming rate and which files stream (optional A01 run) | `CdvdVerboseReads` log mapped through `layout.tsv` | MB/s, files |
 
-**Frames.** A frame is the work between two display flips (DISPFB base or
-offset change). Without flips, windows of 2 vsyncs are used (the game
-paces at 2 vsyncs per frame). Partial frames at the start and end of each
-dump are dropped. Each scene gets one ~5 s multi-frame dump (≈125–150
-frames, the source of p95) and three single-frame dumps at moments you
-judge heaviest (candidates for max).
+**Frames.** This game keeps one display buffer (512×448 16-bit at FBP 140)
+and starts every frame by copying the previous finished frame into it
+(16 sprites). That copy, the **present**, delimits frames. Display flips
+and fixed 2-vsync windows remain as fallbacks for other games. Partial
+frames at the start and end of each dump are dropped, and vsyncs per
+frame give the real frame pacing. Each scene gets one ~5 s multi-frame
+dump (≈125–150 frames, the source of p95) and three single-frame dumps at
+moments you judge heaviest (candidates for max).
 
 **On the EE sweep (d).** EE Cycle Rate scales emulated cycle accounting,
 not just CPU speed. The game needs PCSX2's `EETimingHack`, so it reacts to
@@ -303,10 +314,20 @@ recompiled prototype (instructions executed per frame on the hot paths)
 and checks the two against each other.
 
 **Tool status.** `gsdump_stats.py` implements rows 2–11 from PCSX2 2.6.3's
-dump format (`GSDump.cpp`, `GSState::Freeze`) and passes a synthetic-dump
-self-test (`tests/test_gsdump_stats.py`). It has **not yet seen a real
-dump**: the pilot capture is there to catch format surprises before the
-scene runs.
+dump format (`GSDump.cpp`, `GSState::Freeze`). It passes a synthetic-dump
+self-test (`tests/test_gsdump_stats.py`) covering flip, present and
+vsync-window framing, and has been **validated on the 4 pilot dumps**.
+The pilot found three things, all fixed:
+- 2.6.3 logs every transfer as index 3, so there's no per-path split.
+- The game uses a present copy, not flips.
+- Overdraw has to be measured against the main render target, not the
+  512-wide display output.
+
+Checks on real data:
+- The present copy measures exactly 512×448 px.
+- GIF bytes agree with vertices × ~3 qwords + uploads to within 2 %.
+- All 111 frames are exactly 2 vsyncs, matching the frame pacing inferred
+  statically in A9.
 
 **Known approximations:**
 - Fill counts clipped geometry. It doesn't apply depth or alpha-test
@@ -314,7 +335,60 @@ scene runs.
 - The draw count models a renderer without reordering.
 - Texture/RT overlap is judged by GS memory page ranges, not exact
   swizzled addresses.
-- Texture alpha above 0x80 can't be seen without decoding textures.
+- Texture alpha above 0x80 can't be seen without decoding textures. For
+  textured As-blends that is the remaining question for fixed-function
+  blending. It can be answered by decoding the CLUTs from the dump's VRAM
+  if the scene runs show many such draws.
+
+### B2a. Pilot result: in-engine cutscene, NTSC (not yet a scene from SAVESTATES.md)
+
+The pilot captured a subtitled close-up dialogue cutscene (Harry and
+Quirrell) rather than the main menu. That's fine for validation, and it is
+real data. 4 dumps, 111 complete frames:
+
+| Per frame | max | p95 | mean |
+|---|---|---|---|
+| vsyncs (pacing) | 2 | 2 | 2.0, steady **30 fps** |
+| draw calls (est.) | 184 | 184 | 85 |
+| vertices | 78,374 | 76,942 | 38,778 |
+| primitives | 28,714 | 27,928 | 12,253 |
+| fill, px (all targets) | 2.61 M | 2.57 M | 2.33 M |
+| overdraw vs 640×448 main RT | 9.1× | 9.0× | 8.1× |
+| fill with blending, px | 0.94 M | 0.90 M | 0.82 M |
+| texture upload, bytes (count) | 1.53 M (134) | 1.53 M (134) | 0.97 M (76) |
+| unique texture+CLUT pairs | 89 | 89 | 47 |
+| … de-swizzled, native / RGBA8 | 3.9 / 9.8 MB | 3.9 / 9.8 MB | 3.3 / 7.3 MB |
+| CLUT loads | 399 | 394 | 227 |
+| GIF bytes | 5.37 M | 5.30 M | 2.88 M |
+| blends GLES can't express | 0 | 0 | 0 |
+| readbacks / local copies / FIFO reads | 0 | 0 | 0 |
+
+**Render setup:**
+- **Main target** 640×448 CT32 with a Z24 buffer; about 1.95 M px of fill
+  per frame lands there.
+- **Display** 512×448 CT16, interlaced, frame mode, NTSC (SMODE1
+  CMOD = 2, even with the European BIOS). It receives the 16-sprite present
+  copy.
+- **Two 256×256 CT16 targets** with their own Z16 buffers, about 2.8k
+  triangles each, read back as textures. They are likely character shadow
+  or render-to-texture passes.
+
+**Texture traffic:**
+- Textures are almost all 8-bit palettized (T8, some T4).
+- No mipmapping.
+- Roughly 1 MB of texture data is re-uploaded every frame, the usual PS2
+  pattern with 4 MB of VRAM.
+
+**Blending:** all blended draws use the standard `(Cs−Cd)·As+Cd` family.
+No untextured primitive has alpha above 1.0.
+
+**Early read (not a verdict).** Draw count and fill look modest for a
+GLES 3 GPU at 640×448 and 30 fps. The heavy items are:
+- about 1–1.5 MB of palettized textures to convert per frame;
+- up to ~78k vertices per frame through VU1;
+- about 9× overdraw.
+
+The scene runs will show whether gameplay is heavier.
 
 ### B3. Part C: verdict
 
@@ -334,9 +408,12 @@ the day the device arrives.
 
 ## Open items
 
-1. **BIOS:** your answer came through as the template text
-   ("<EITHER … OR …>"), so it's still open. The clean profile has no BIOS
-   set; please select a dump of your own console in Settings > BIOS.
-2. **Pilot capture** (MEASURE_RUNBOOK.md §1). I'll validate the parser on
-   it before you do the scenes.
-3. **Savestates** per SAVESTATES.md, then the per-scene runs.
+1. **BIOS:** the clean profile now uses `SCPH-50004_BIOS_V9_EUR_190`,
+   copied into `D:\ps2port-data\pcsx2-clean\bios\` (outside the repo).
+   Whether it is a dump of your own console is still unconfirmed.
+2. ~~Pilot capture~~: done and validated (B2a).
+3. **Savestates** per SAVESTATES.md, then the per-scene runs. NTSC slots 1
+   and 2 already exist; which scenes are they?
+4. The OSD numbers for the pilot weren't filed in `observations.md`. They
+   aren't needed for the pilot (pacing comes from the dumps), but the EE
+   sweep in the scene runs only exists as OSD readings.

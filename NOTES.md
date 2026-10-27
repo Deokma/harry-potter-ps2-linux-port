@@ -71,15 +71,16 @@ Phase reports live in `docs/PHASE_N.md`.
 
 ## Open questions
 
-- Q0.3 BIOS: the user's reply came through as the unfilled template, so
-  it's still unconfirmed whether the bundle's SCPH-50004 is their own dump.
-  The clean profile has no BIOS configured; the user selects one in
-  Settings > BIOS. Never copy BIOS files.
-- Q1.2 What exactly is resident at EE 0x80000–0x95060 (likely EELOAD
-  leftovers)? Check that it is unchanged across savestates.
-- Q1.3 Pilot capture pending: validates `gsdump_stats.py` on a real dump
-  (it has only passed the synthetic self-test so far).
+- Q0.3 BIOS: the user placed the bundle's SCPH-50004 (EUR v1.90) files in
+  `D:\ps2port-data\pcsx2-clean\bios\` and selected it (2026-10-27). It is
+  still unconfirmed whether that is a dump of their own console. It stays
+  outside the repo; never copy or commit BIOS files.
 - Q1.4 WSL2 install in progress on the user's side (reported 2026-10-27).
+- Q1.5 Which scenes are in NTSC savestate slots 1 and 2 (made 22:34–22:35
+  on 2026-10-27)?
+- Resolved: Q1.2 (0x70000–0x96000 is static: ≤23 of 38,912 words differ
+  across three states); Q1.3 (pilot validated `gsdump_stats.py`, PHASE_1
+  B2a).
 
 ## Facts worth remembering (verified)
 
@@ -102,6 +103,16 @@ Phase reports live in `docs/PHASE_N.md`.
   reg), f32 q), 8 KiB privileged regs; packets 0 = transfer (u8 path,
   u32 size), 1 = vsync (u8 field), 2 = FIFO read (u32), 3 = priv regs.
   Path index 0 (old PATH1) carries VU1 memory up to its end after EOP.
+- Real 2.6.3 dumps log **every** GIF transfer as index 3 (all paths go
+  through the GIF unit), so the source path is unknown; only index 0
+  (old-style PATH1) has trailing VU1 memory after EOP.
+- This game keeps one display buffer (512×448 CT16 at FBP 140) and starts
+  each frame by copying the finished 640×448 CT32 frame into it with 16
+  sprites. `gsdump_stats.py` splits frames at that "present".
+- The NTSC disc runs in NTSC mode with the EUR BIOS (SMODE1 CMOD = 2,
+  448 lines); the pilot cutscene ran at a steady 2 vsyncs per frame.
+- GS dump size: a ~3 s multi-frame dump of a cutscene was 93 MB zstd,
+  parsed in ~20 s.
 - `EmuCore.CdvdVerboseReads = true` makes PCSX2 log every disc read as
   `DvdRead: Reading Sector NNNNNNN (NNN Blocks of Size 2048) …` via
   `Console.WriteLn` (goes to emulog with timestamps).

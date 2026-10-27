@@ -3,19 +3,24 @@
 
 Replays the GIF stream recorded in a PCSX2 2.x GS dump (.gs, .gs.zst,
 .gs.xz) without rendering anything, and measures per frame:
-  - primitives by type, vertices, GIF bytes per path (PATH1 = VU1 XGKICK)
+  - primitives by type, vertices, total GIF bytes (2.6.3 dumps don't
+    record which GIF path a transfer came from)
   - estimated draw calls: runs of primitives with unchanged draw state
-  - fill: scissor-clipped pixel area of every primitive (overdraw), split
-    by blending / texturing / depth test, and scaled to a 640x480 panel
-  - render targets and depth buffers (base, width, format, drawn extent)
+  - fill: scissor-clipped pixel area of every primitive, split by
+    blending / texturing / depth test; overdraw relative to the main
+    render target, and that fill scaled to a 640x480 panel
+  - render targets and depth buffers (base, width, format, drawn extent,
+    fill per target)
   - display mode from the privileged registers (interlace, frame/field)
   - texture uploads (host->local), local->local copies, readbacks
   - draws whose blend mode GLES fixed-function blending cannot express,
     and draws that texture from a render target (incl. the current one)
   - unique texture+CLUT combinations and their de-swizzled size
-Frames are delimited by display flips (DISPFB base change); without
-flips, by windows of --vsyncs-per-frame vsyncs. Partial frames at the
-start and end of a dump are dropped.
+Frames are delimited by display flips (DISPFB base change) or, for games
+with a single display buffer, by "presents" (drawing switches into the
+displayed buffer, i.e. the copy of a finished frame). Without either,
+windows of --vsyncs-per-frame vsyncs are used. Partial frames at the
+start and end of a dump are dropped; vsyncs per frame give the pacing.
 
 Format (PCSX2 v2.6.3 GSDump.cpp / GSState::Freeze): u32 0xFFFFFFFF,
 u32 header size, GSDumpHeader (9 x u32), serial, screenshot, GS state,
@@ -163,15 +168,22 @@ def blend_flags(alpha, colclamp, pabe):
 NONFIXED = {"factor_gt_1", "dst_alpha", "fix_gt_1", "wrap", "pabe"}
 
 
-class Interval:
-    """Counters for one vsync interval (merged into frames later)."""
+class Chunk:
+    """Counters between two events: a vsync and/or a frame boundary.
+
+    Chunks are merged into frames later. A chunk ends either at a vsync
+    (vsync=True) or right before a "present" draw (see GSReplay.emit);
+    boundary says whether a frame ends with it ("flip" or "present").
+    """
 
     def __init__(self):
         self.c = Counter()
         self.tex = {}       # texture+CLUT key -> (native bytes, rgba8 bytes)
         self.rts = {}       # (fbp, fbw, psm) -> [x0, y0, x1, y1]
+        self.rtfill = Counter()  # (fbp, fbw, psm) -> clipped pixels
         self.zbufs = set()  # (zbp, psm)
-        self.flip = False
+        self.vsync = False
+        self.boundary = None
         self.disp = None
 
     def merge(self, other):
@@ -181,6 +193,7 @@ class Interval:
             cur = self.rts.setdefault(k, list(bb))
             cur[0], cur[1] = min(cur[0], bb[0]), min(cur[1], bb[1])
             cur[2], cur[3] = max(cur[2], bb[2]), max(cur[3], bb[3])
+        self.rtfill.update(other.rtfill)
         self.zbufs |= other.zbufs
         self.disp = other.disp or self.disp
 
@@ -208,8 +221,10 @@ class GSReplay:
         self.vq = []
         self.rgba_a = 0x80
         self.cbp0 = self.cbp1 = -1
-        self.cur = Interval()
-        self.intervals = []
+        self.cur = Chunk()
+        self.chunks = []
+        d = self.display()
+        self.disp_fbp = d.get("fbp") if d else None
         self.batch_key = None
         self.batch_flags = set()
         self.batch_z = False
@@ -424,6 +439,12 @@ class GSReplay:
         c = bits(attrs, 9, 1)
         key = self.draw_key(t, attrs, c)
         if key != self.batch_key:
+            # "present": drawing switches into the displayed buffer, e.g. the
+            # copy of a finished frame into a single display buffer
+            fbp = bits(self.ctx[c]["FRAME"], 0, 9)
+            if fbp == self.disp_fbp and \
+                    (self.last_rt is None or self.last_rt[0] != fbp):
+                self._close(vsync=False, boundary="present")
             self.new_draw(t, attrs, c)
             self.batch_key = key
         ctx, cnt = self.ctx[c], self.cur.c
@@ -459,6 +480,7 @@ class GSReplay:
         if area > 0:
             frame = ctx["FRAME"]
             rt = (bits(frame, 0, 9), bits(frame, 16, 6), bits(frame, 24, 6))
+            self.cur.rtfill[rt] += area
             bx0 = max(min(p[0] for p in pts), x0)
             by0 = max(min(p[1] for p in pts), y0)
             bx1 = min(max(p[0] for p in pts), x1)
@@ -473,19 +495,21 @@ class GSReplay:
 
     # -- GIF ----------------------------------------------------------------
     def transfer(self, index, data):
+        """One recorded GIF transfer.
+
+        Index 0 = old-style PATH1 (rest of VU1 memory follows the packet),
+        1 = PATH2, 2 = PATH3, 3 = any path via PCSX2's GIF unit. 2.6.3 dumps
+        record everything as 3, so the source path is not known.
+        """
         n = len(data) // 16
         if n == 0:
             return
         words = struct.unpack_from(f"<{2 * n}Q", data)
-        used = self._gif(self.paths[index & 3], words, n, index in (0, 3))
-        self.cur.c[f"gif_bytes_path{(1, 2, 3, 1)[index & 3]}"] += 16 * used
+        used = self._gif(self.paths[index & 3], words, n, index == 0)
+        self.cur.c["gif_bytes"] += 16 * used
 
     def _gif(self, p, words, n, stop_at_eop):
-        """Run GIF tags over n qwords; returns how many were consumed.
-
-        PATH1 transfers stop after the EOP packet: old-style dumps record
-        the rest of VU1 memory behind it.
-        """
+        """Run GIF tags over n qwords; returns how many were consumed."""
         q = 0
         while q < n:
             if p.nloop == 0:
@@ -563,6 +587,8 @@ class GSReplay:
     # -- frames -------------------------------------------------------------
     def privileged(self, regs):
         self.priv = regs
+        d = self.display()
+        self.disp_fbp = d.get("fbp") if d else None
 
     def display(self):
         r = self.priv
@@ -586,15 +612,19 @@ class GSReplay:
                 "interlaced": bits(smode2, 0, 1),
                 "field_mode": bits(smode2, 1, 1)}
 
+    def _close(self, vsync, boundary):
+        self.cur.vsync = vsync
+        self.cur.boundary = boundary
+        self.cur.disp = self.display()
+        self.chunks.append(self.cur)
+        self.cur = Chunk()
+
     def vsync(self, field):
         disp = self.display()
         key = disp and (disp.get("fbp"), disp.get("dbx"), disp.get("dby"))
-        self.cur.disp = disp
-        self.cur.flip = self.last_disp_key is not None and \
-            key != self.last_disp_key
+        flip = self.last_disp_key is not None and key != self.last_disp_key
         self.last_disp_key = key
-        self.intervals.append(self.cur)
-        self.cur = Interval()
+        self._close(vsync=True, boundary="flip" if flip else None)
         self.batch_key = None
 
     def fifo_read(self, size):
@@ -657,50 +687,68 @@ def replay(raw):
     return info, gs
 
 
-def assemble(intervals, vsyncs_per_frame):
-    """Group vsync intervals into complete frames."""
-    flips = [i for i, iv in enumerate(intervals) if iv.flip]
-    groups, mode = [], "flip"
-    if len(flips) >= 2:
-        for a, b in zip(flips, flips[1:]):
-            groups.append(intervals[a + 1:b + 1])
+def assemble(chunks, vsyncs_per_frame):
+    """Group chunks into complete frames.
+
+    Frames run from one boundary (display flip or present) to the next;
+    the partial frames before the first and after the last are dropped.
+    Without boundaries, frames are windows of vsyncs_per_frame vsyncs.
+    """
+    bounds = [i for i, ch in enumerate(chunks) if ch.boundary]
+    groups = []
+    if len(bounds) >= 2:
+        mode = "+".join(sorted({chunks[i].boundary for i in bounds}))
+        groups = [chunks[a + 1:b + 1] for a, b in zip(bounds, bounds[1:])]
     else:
         mode = f"{vsyncs_per_frame}-vsync window"
-        for i in range(0, len(intervals) - vsyncs_per_frame + 1,
-                       vsyncs_per_frame):
-            groups.append(intervals[i:i + vsyncs_per_frame])
+        group, seen = [], 0
+        for ch in chunks:
+            group.append(ch)
+            seen += ch.vsync
+            if seen == vsyncs_per_frame:
+                groups.append(group)
+                group, seen = [], 0
     frames = []
-    for g in groups:
-        f = Interval()
-        for iv in g:
-            f.merge(iv)
-        f.c["vsyncs"] = len(g)
+    for grp in groups:
+        f = Chunk()
+        for ch in grp:
+            f.merge(ch)
+        f.c["vsyncs"] = sum(ch.vsync for ch in grp)
         frames.append(f)
     return mode, frames
 
 
 METRICS = [
     "vsyncs", "draws", "prims", "prims_tri", "prims_sprite", "prims_line",
-    "prims_point", "vertices", "fill_px", "overdraw", "fill_px_panel",
-    "fill_blend_px", "fill_tex_px", "fill_z_px", "gif_bytes_path1",
-    "gif_bytes_path2", "gif_bytes_path3", "uploads", "upload_bytes",
-    "clut_loads", "copies", "copy_bytes", "readbacks", "readback_bytes",
-    "fifo_read_bytes", "rt_count", "rt_switches", "draws_textured",
-    "draws_mipmapped", "uniq_tex_clut", "tex_bytes_native",
-    "tex_bytes_rgba8", "draws_blend", "draws_blend_nonfixed",
-    "draws_blend_factor_gt_1", "draws_blend_dst_alpha",
-    "draws_blend_fix_gt_1", "draws_blend_wrap", "draws_blend_pabe",
-    "draws_blend_aa1", "draws_blend_src_alpha", "prims_src_alpha_gt_1",
-    "draws_date", "draws_afail_partial", "draws_tex_from_current_rt",
-    "draws_tex_from_rt", "texflush"]
+    "prims_point", "vertices", "fill_px", "main_rt_px", "overdraw",
+    "fill_px_panel", "fill_blend_px", "fill_tex_px", "fill_z_px",
+    "gif_bytes", "uploads", "upload_bytes", "clut_loads", "copies",
+    "copy_bytes", "readbacks", "readback_bytes", "fifo_read_bytes",
+    "rt_count", "rt_switches", "draws_textured", "draws_mipmapped",
+    "uniq_tex_clut", "tex_bytes_native", "tex_bytes_rgba8", "draws_blend",
+    "draws_blend_nonfixed", "draws_blend_factor_gt_1",
+    "draws_blend_dst_alpha", "draws_blend_fix_gt_1", "draws_blend_wrap",
+    "draws_blend_pabe", "draws_blend_aa1", "draws_blend_src_alpha",
+    "prims_src_alpha_gt_1", "draws_date", "draws_afail_partial",
+    "draws_tex_from_current_rt", "draws_tex_from_rt", "texflush"]
+
+
+def rt_name(k):
+    return f"fbp{k[0]}/w{k[1] * 64}/{PSM_NAMES.get(k[2], k[2])}"
 
 
 def frame_row(f):
+    """Flatten a frame. Overdraw is relative to the main render target (the
+    largest drawn extent), which is also what the panel scaling uses: the
+    device renders that target at native size and scales it to 640x480."""
     row = {k: f.c.get(k, 0) for k in METRICS}
-    d = f.disp or {}
-    disp_px = (d.get("w") or 640) * (d.get("h") or 448)
-    row["overdraw"] = round(f.c["fill_px"] / disp_px, 3)
-    row["fill_px_panel"] = round(f.c["fill_px"] * PANEL_PX / disp_px)
+    main = max(f.rts.items(), default=(None, [0, 0, 640, 448]),
+               key=lambda kv: (kv[1][2] - kv[1][0]) * (kv[1][3] - kv[1][1]))
+    bb = main[1]
+    main_px = max(1, round((bb[2] - bb[0]) * (bb[3] - bb[1])))
+    row["main_rt_px"] = main_px
+    row["overdraw"] = round(f.c["fill_px"] / main_px, 3)
+    row["fill_px_panel"] = round(f.c["fill_px"] * PANEL_PX / main_px)
     row["fill_px"] = round(f.c["fill_px"])
     for k in ("fill_blend_px", "fill_tex_px", "fill_z_px"):
         row[k] = round(f.c[k])
@@ -708,13 +756,15 @@ def frame_row(f):
     row["uniq_tex_clut"] = len(f.tex)
     row["tex_bytes_native"] = sum(v[0] for v in f.tex.values())
     row["tex_bytes_rgba8"] = sum(v[1] for v in f.tex.values())
+    d = f.disp or {}
     row["display"] = (f"{d.get('w')}x{d.get('h')} {d.get('psm')} "
-                      f"int={d.get('interlaced')} "
+                      f"fbp={d.get('fbp')} int={d.get('interlaced')} "
                       f"field={d.get('field_mode')}") if d.get("w") else "-"
+    row["main_rt"] = rt_name(main[0]) if main[0] else "-"
     row["render_targets"] = ";".join(
-        f"fbp{k[0]}/w{k[1] * 64}/{PSM_NAMES.get(k[2], k[2])}:"
-        f"{int(bb[2] - bb[0])}x{int(bb[3] - bb[1])}"
-        for k, bb in sorted(f.rts.items()))
+        f"{rt_name(k)}:{int(b[2] - b[0])}x{int(b[3] - b[1])}"
+        f" fill={round(f.rtfill[k])}"
+        for k, b in sorted(f.rts.items()))
     return row
 
 
@@ -746,27 +796,35 @@ def main(argv=None):
         Counter(), Counter()
     for f in files:
         info, gs = replay(load_dump(f))
-        mode, frames = assemble(gs.intervals, args.vsyncs_per_frame)
-        dumps.append({"file": f.name, **info, "vsyncs": len(gs.intervals),
+        mode, frames = assemble(gs.chunks, args.vsyncs_per_frame)
+        vsyncs = sum(ch.vsync for ch in gs.chunks)
+        pacing = Counter(fr.c["vsyncs"] for fr in frames)
+        if pacing.get(0):
+            gs.warnings["frames with 0 vsyncs: boundary detection may "
+                        "split frames"] += pacing[0]
+        dumps.append({"file": f.name, **info, "vsyncs": vsyncs,
                       "frames": len(frames), "frame_mode": mode,
+                      "vsyncs_per_frame": dict(sorted(pacing.items())),
                       "warnings": dict(gs.warnings)})
         for i, fr in enumerate(frames):
             row = frame_row(fr)
             rows.append({"scene": args.scene, "dump": f.name, "frame": i,
                          **row})
             displays[row["display"]] += 1
-            for k, bb in fr.rts.items():
-                cur = rts.setdefault(k, [0, 0, 0])
-                cur[0] = max(cur[0], int(bb[2] - bb[0]))
-                cur[1] = max(cur[1], int(bb[3] - bb[1]))
+            for k, b in fr.rts.items():
+                cur = rts.setdefault(k, [0, 0, 0, 0.0])
+                cur[0] = max(cur[0], int(b[2] - b[0]))
+                cur[1] = max(cur[1], int(b[3] - b[1]))
                 cur[2] += 1
+                cur[3] += fr.rtfill[k]
             for z in fr.zbufs:
                 zbufs[f"zbp{z[0]}/{PSM_NAMES.get(z[1], z[1])}"] += 1
             for key in fr.tex:
                 psms[PSM_NAMES.get(key[2], key[2])] += 1
-        print(f"{f.name}: {len(gs.intervals)} vsyncs, {len(frames)} frames "
-              f"({mode})")
-    cols = ["scene", "dump", "frame"] + METRICS + ["display",
+        print(f"{f.name}: {vsyncs} vsyncs, {len(frames)} frames ({mode}); "
+              f"vsyncs/frame {dict(sorted(pacing.items()))}"
+              + (f"; warnings {dict(gs.warnings)}" if gs.warnings else ""))
+    cols = ["scene", "dump", "frame"] + METRICS + ["display", "main_rt",
                                                     "render_targets"]
     with open(out / "frames.csv", "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=cols)
@@ -781,19 +839,19 @@ def main(argv=None):
         "scene": args.scene, "frames": len(rows), "dumps": dumps,
         "metrics": stats, "displays": dict(displays),
         "render_targets": {
-            f"fbp{k[0]}/w{k[1] * 64}/{PSM_NAMES.get(k[2], k[2])}":
-                {"max_w": v[0], "max_h": v[1], "frames": v[2]}
+            rt_name(k): {"max_w": v[0], "max_h": v[1], "frames": v[2],
+                         "mean_fill_px": round(v[3] / max(1, v[2]))}
             for k, v in sorted(rts.items())},
         "depth_buffers": dict(zbufs),
         "texture_formats_per_frame_uses": dict(psms)}
     (out / "summary.json").write_text(json.dumps(summary, indent=2) + "\n",
                                       newline="\n")
-    key_metrics = ["draws", "vertices", "prims", "fill_px", "overdraw",
-                   "fill_px_panel", "fill_blend_px", "upload_bytes",
-                   "uniq_tex_clut", "tex_bytes_rgba8",
-                   "draws_blend_nonfixed", "draws_tex_from_current_rt",
-                   "draws_tex_from_rt", "readbacks", "gif_bytes_path1",
-                   "gif_bytes_path3"]
+    key_metrics = ["vsyncs", "draws", "vertices", "prims", "fill_px",
+                   "overdraw", "fill_px_panel", "fill_blend_px",
+                   "upload_bytes", "uploads", "uniq_tex_clut",
+                   "tex_bytes_rgba8", "draws_blend_nonfixed",
+                   "draws_tex_from_current_rt", "draws_tex_from_rt",
+                   "readbacks", "copies", "gif_bytes"]
     lines = [f"# GS stats: {args.scene}", "",
              f"{len(rows)} complete frames from {len(files)} dump(s).", "",
              "| metric | max | p95 | mean |", "|---|---|---|---|"]
@@ -802,13 +860,19 @@ def main(argv=None):
         lines.append(f"| {k} | {s['max']} | {s['p95']} | {s['mean']} |")
     lines += ["", "Displays: " + ", ".join(f"{k} ({v})" for k, v in
                                            displays.items()), "",
-              "Render targets (max drawn extent):"]
-    lines += [f"- {k}: {v['max_w']}x{v['max_h']} in {v['frames']} frames"
+              "Render targets (max drawn extent, mean fill per frame):"]
+    lines += [f"- {k}: {v['max_w']}x{v['max_h']} in {v['frames']} frames, "
+              f"{v['mean_fill_px']} px"
               for k, v in summary["render_targets"].items()]
+    lines += ["", "Frame boundaries: " + ", ".join(
+        f"{d['file']}: {d['frame_mode']} {d['vsyncs_per_frame']}"
+        for d in dumps)]
     (out / "summary.md").write_text("\n".join(lines) + "\n", newline="\n")
     print(f"{len(rows)} frames -> {out}")
-    for k in ("draws", "vertices", "fill_px_panel", "upload_bytes"):
-        print(f"  {k:14s} max {stats[k]['max']:>12} p95 {stats[k]['p95']:>12}")
+    for k in ("vsyncs", "draws", "vertices", "fill_px", "overdraw",
+              "upload_bytes"):
+        print(f"  {k:14s} max {stats[k]['max']:>12} p95 {stats[k]['p95']:>12}"
+              f" mean {stats[k]['mean']:>12}")
     return 0
 
 
