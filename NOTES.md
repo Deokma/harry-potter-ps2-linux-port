@@ -3,6 +3,20 @@
 Running log: decisions, open questions, commands that worked.
 Phase reports live in `docs/PHASE_N.md`.
 
+## Phase 2 status (2026-10-28, supersedes the Phase 1 handoff below)
+
+- **Phase 2 Part A is done** (`docs/PHASE_2.md`): `bench/` builds natively
+  and for aarch64 in WSL (`scripts/build_bench.sh`). Its self-tests pass,
+  natively and under qemu, with identical checksums, and every test ran
+  in quick mode. Timings from qemu or the desktop are not device timings.
+- **Part B waits for the device.**
+  1. You enable SSH key login on the device.
+  2. `scripts/deploy.sh`, then `scripts/run_remote.sh`.
+  3. I compare the results with PHASE_2_DEVICE_BENCH and update PHASE_1
+     Part C.
+- WSL now has the build tools (the user installed them on 2026-10-28;
+  this resolves Q1.4). `bench_gl` needs glibc 2.34 or newer on the device.
+
 ## Current state and handoff (updated 2026-10-28 00:30)
 
 **Where we are:**
