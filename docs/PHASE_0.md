@@ -163,7 +163,8 @@ python -I scripts/extract_disc.py IMAGE [--out DIR] [--force]
     include one in the volume-descriptor area, so FLAC support is required,
     not optional.
   - Full verify (`--verify`, decode all 1,147,000 hunks and compare SHA-1):
-    **pending**, still running when this was written.
+    **ok**, SHA-1 `410d4ed6…4432` matches the CHD header. Took 19.5 min in
+    pure Python on this laptop.
 - Edge cases met on these discs and handled:
   - The PAL disc sets the ISO9660 multi-extent bit (0x80) on 99 file records
     that have no continuation record (a mastering quirk). Real multi-extent

@@ -45,20 +45,40 @@ Phase reports live in `docs/PHASE_N.md`.
 - **D0.3 Line endings.** `.gitattributes` forces LF: scripts will run in WSL
   and on the device.
 
+- **D1.1 Primary disc NTSC-U SLUS-20826, PAL SLES-52055 secondary**
+  (user decision, 2026-10-27). Same boot ELF; PAL savestates are OK for
+  per-frame workload measurements, frame pacing scaled 25 → 30 fps.
+- **D1.2 Phase 1 static tooling is home-grown Python** (`analyze_elf.py`,
+  `analyze_irx.py`, `scan_code_in_data.py`, `inspect_savestate.py`): enough
+  for a census and estimates without installing Ghidra/rabbitizer. Phase 3
+  will need a real R5900 decoder; evaluate existing ones then.
+
 ## Open questions
 
-- Q0.1 Which disc is canonical for development: NTSC-U SLUS-20826 (ISO) or
-  PAL SLES-52055 (CHD)? Boot ELF and IOP modules are byte-identical, so
-  this choice is about data and video mode only. (See PHASE_0.md.)
 - Q0.2 Move the ISO and the PCSX2 bundle folder into `./private/`? Both are
-  git-ignored where they are now.
+  git-ignored where they are now. (No answer yet; left in place.)
 - Q0.3 BIOS for PCSX2 profiling: the bundle has an SCPH-50004 (EUR v1.90)
   BIOS in `Engine/bios`. I have not read, copied or hashed it. Per the rules
-  it must be a dump from the user's own console; needs confirmation.
+  it must be a dump from the user's own console; needs confirmation
+  before any PCSX2 run.
 - Q0.4 The bundle's per-game settings enable "Widescreen 16:9" and
-  "50 FPS" patches for SLES-52055. These must be off for Phase 1 profiling.
-- Q0.5 Is the NTSC ISO a clean dump? redump.org (HTTP only) could not be
-  reached from here; compare MD5/SHA-1 by hand (values in PHASE_0.md).
+  "50 FPS" patches for SLES-52055. Phase 1 profiling uses a separate clean
+  profile with patches off (PHASE_1.md B0).
+- Q1.1 Approval of the Phase 1 measurement plan (PHASE_1.md Part B) and
+  savestates for the listed scenes.
+- Q1.2 What exactly is resident at EE 0x80000–0x95060 (likely EELOAD
+  leftovers)? Check that it is unchanged across savestates.
+
+## Facts worth remembering (verified)
+
+- NTSC ISO = redump-clean (volume prefix MD5 a1e5106d…; trailing 160
+  sectors zero). PAL CHD decodes with matching header SHA-1.
+- Same boot ELF on both discs: SHA-256 8f86d879…a387, PCSX2 CRC C71A6146.
+- PCSX2 GameIndex: only `EETimingHack` for both serials; no GS/clamp fixes.
+- Stock frame pacing: 2 vsyncs per frame (`0x3A4FD8` = 2), per the
+  "50 FPS" pnach.
+- PCSX2 2.6.3 savestates are zips with zstd members; Python 3.14's
+  `zipfile` reads them directly.
 
 ## Commands that worked
 
@@ -71,4 +91,13 @@ python -I scripts/extract_disc.py ".../HarryPotter.chd" --verify
 # Extract more files by glob, or everything
 python -I scripts/extract_disc.py IMAGE --extract "/MOVIES/*" --extract "*.HOG"
 python -I scripts/extract_disc.py IMAGE --all
+
+# Phase 1: static analysis (outputs under private/analysis/SLUS_208.26/)
+python -I scripts/analyze_elf.py private/extract/SLUS-20826/files/SLUS_208.26
+python -I scripts/analyze_irx.py private/extract/SLUS-20826/files \
+    --json private/analysis/SLUS_208.26/iop_modules.json
+python -I scripts/scan_code_in_data.py "Harry Potter and The Sorceror's Stone.iso" \
+    --json private/analysis/SLUS_208.26/code_in_data.json      # ~1 min
+python -I scripts/inspect_savestate.py STATE.p2s ELF \
+    --patches-zip ".../Engine/resources/patches.zip" --json OUT.json
 ```
