@@ -949,15 +949,14 @@ def main(argv=None):
         "extracted_extra_files": extra,
         "warnings": warnings,
     }
+    if args.verify and not isinstance(img, ChdImage):
+        sys.exit("--verify only applies to CHD images")
+    if args.hash or args.verify:  # one full pass serves both
+        hashes = hash_image(img)
     if args.hash:
-        manifest["image"]["hashes"] = hash_image(img)
+        manifest["image"]["hashes"] = hashes
     if args.verify:
-        if not isinstance(img, ChdImage):
-            sys.exit("--verify only applies to CHD images")
-        digest = hashlib.sha1()
-        for chunk in img.iter_logical():
-            digest.update(chunk)
-        ok = digest.hexdigest() == img.rawsha1
+        ok = hashes["sha1"] == img.rawsha1
         manifest["image"]["verify_raw_sha1"] = "ok" if ok else "MISMATCH"
         if not ok:
             warnings.append("CHD raw SHA-1 mismatch after full decode")
