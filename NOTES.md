@@ -3,6 +3,55 @@
 Running log: decisions, open questions, commands that worked.
 Phase reports live in `docs/PHASE_N.md`.
 
+## Current state and handoff (updated 2026-10-27 23:05)
+
+**Where we are:**
+- Phase 0 done (`docs/PHASE_0.md`).
+- Phase 1 Part A (static analysis) done.
+- Phase 1 Part B (PCSX2 measurements) is in progress: plan approved with
+  the user's additions a–d (`docs/PHASE_1.md` §B).
+- Phase 1 Part C (the go / no-go verdict) not started.
+- **Stop at the end of Phase 1** and wait for the user's go-ahead before
+  Phase 2.
+
+**The next session takes over the measurement clicks (user's request):**
+1. The user agreed to screen control for this. Get access with
+   `request_access(["PCSX2 (clean profile)"])` (Start-menu shortcut to
+   `D:\ps2port-data\pcsx2-clean\pcsx2-qt.exe`).
+   - The portable PCSX2 is not resolvable under any other name.
+   - If access fails, stop and ask. **Do not** fall back to scripted
+     keystrokes (SendKeys / SendInput) without the user's explicit OK:
+     that skips the consent prompt.
+2. Follow `docs/MEASURE_RUNBOOK.md` per scene:
+   - load the slot (F2 / F3), read the OSD (FPS / VPS / Speed);
+   - **hold Ctrl+Shift+F8 ~5 s** (multi-frame GS dump, records while
+     held), then **Shift+F8 ×3** (single-frame dumps);
+   - EE Cycle Rate sweep 75 / 60 / 50 % (Settings → Emulation; reload the
+     state each time; read the lowest FPS), then set it back to 100 %;
+   - `python -I scripts/file_dumps.py <ID>`;
+   - fill in `D:\ps2port-data\reports\observations.md`.
+3. Analyse each scene:
+   - `python -I scripts/gsdump_stats.py D:/ps2port-data/snapshots/<ID> --scene <ID>`;
+   - `inspect_savestate.py` on its savestate;
+   - add the results to `docs/PHASE_1.md` (like §B2a / §B2b), then commit.
+
+**Scene status:**
+
+| ID | Source | Status |
+|---|---|---|
+| PILOT | NTSC cutscene (Harry / Quirrell), no slot | measured (§B2a) |
+| N01 | NTSC slot 1: cutscene, Ollivander dialogue | to measure |
+| N02 | NTSC slot 2: gameplay, Ollivanders, Harry alone | to measure |
+| N03 | NTSC slot 3: gameplay, Ollivanders + Ollivander | dumps measured (§B2b); OSD + EE sweep missing |
+| F01 | NTSC fresh boot, EA logo / intro movie | to capture (an earlier "F01" folder was gameplay and is now N03) |
+| S01–S08 | PAL slots 1–8 | need savestates from the user first (`docs/SAVESTATES.md`) |
+
+**Known quirks:**
+- PCSX2 must be the **clean profile** (patches off, EE 100 %). PCSX2 may
+  already be running with the NTSC disc.
+- The clean profile uses the bundle's SCPH-50004 EUR BIOS. Whether it is a
+  dump of the user's own console is still unconfirmed.
+
 ## Hard rules (from the brief)
 
 - Game data never enters git: ISO / CHD / ELF / IRX / BIOS / extracted assets
