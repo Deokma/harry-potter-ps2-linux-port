@@ -3,26 +3,28 @@
 Running log: decisions, open questions, commands that worked.
 Phase reports live in `docs/PHASE_N.md`.
 
-## Current state and handoff (updated 2026-10-27 23:55)
+## Current state and handoff (updated 2026-10-28 00:30)
 
 **Where we are:**
 - Phase 0 done (`docs/PHASE_0.md`).
-- Phase 1 Part A (static analysis) done.
-- Phase 1 Part B (PCSX2 measurements): **every NTSC scene is measured**
-  (`docs/PHASE_1.md` §B2a–B2h, with a cross-scene table at the end of
-  B2h). The PAL scenes S01–S08 are the only ones left. They need
-  savestates the user makes (`docs/SAVESTATES.md`).
-- Phase 1 Part C (the go / no-go verdict) not started.
-- **Stop at the end of Phase 1** and wait for the user's go-ahead before
-  Phase 2.
+- **Phase 1 done.** It now waits for the user's review and go-ahead.
+  - Part A: static analysis.
+  - Part B: every NTSC scene measured (`docs/PHASE_1.md` §B2a–B2h). The
+    PAL scenes S01–S08 are deferred (user decision, 2026-10-27).
+  - Part C: **conditional go**, written from the NTSC data only (§Part C).
+    C5 marks what the missing PAL scenes could change.
+- `docs/PHASE_2_DEVICE_BENCH.md` thresholds are filled in from Part C.
+- **Stop here.** Don't start Phase 2 until the user says go.
 
-**Next steps:**
-1. Ask the user for the PAL savestates S01–S08 (or whether to write Part C
-   on the NTSC data alone).
-2. With savestates, run the same per-scene routine as for N01–N03 (below).
-   The PAL disc is `private\pcsx2\Game\HarryPotter.chd`; its slots are
-   numbered separately from NTSC.
-3. Part C: the verdict in `docs/PHASE_1.md` §B3. Then stop.
+**Next steps once the user says go:**
+1. Phase 2, per `docs/PHASE_2_DEVICE_BENCH.md`:
+   - `bench/`, the aarch64 cross toolchain, `deploy.sh` / `run_remote.sh`;
+   - the critical tests are T1 (draw rate), T2 (fill) and T4 / T5
+     (uploads).
+2. Before the Phase 3 renderer design is frozen, capture PAL S03, S05 and
+   S06 (Part C, C7). Use the same per-scene routine as for N01–N03
+   (below). The PAL disc is `private\pcsx2\Game\HarryPotter.chd`, with its
+   own slot numbering.
 
 **Per-scene routine (what worked on 2026-10-27, Claude doing the clicks):**
 - Screen control is agreed **only** via
@@ -147,6 +149,10 @@ Phase reports live in `docs/PHASE_N.md`.
   only outdoor scene reachable without PAL savestates. It has no savestate,
   so no EE sweep. F01 covers the main-menu FMV and the EA logo, the two
   movies the boot shows.
+- **D1.9 Part C written without the PAL scenes** (user decision,
+  2026-10-27). The verdict is conditional go on NTSC data. PHASE_1 C5
+  lists what S01–S08 could change, and C7 makes S03 / S05 / S06 a gate
+  before the Phase 3 renderer design.
 
 ## Open questions
 
@@ -249,6 +255,9 @@ python -I scripts/pcsx2_set.py EmuCore.CdvdVerboseReads=true   # PCSX2 closed
 python -I scripts/file_dumps.py S02              # file new dumps under snapshots\S02
 python -I scripts/gsdump_stats.py D:/ps2port-data/snapshots/S02 --scene S02
 python -I tests/test_gsdump_stats.py             # parser self-test
+# VU1 innermost loops: cycles and reciprocals per iteration -> cycles/vertex
+python -I scripts/vu1_loops.py private/extract/SLUS-20826/files/SLUS_208.26 \
+    --json private/analysis/SLUS_208.26/vu1_loops.json
 # disc reads (CdvdVerboseReads log) per file and per 5 s window
 python -I scripts/cdvd_reads.py D:/ps2port-data/reports/A01_emulog.txt \
     private/extract/SLUS-20826/layout.tsv --after "Loaded state from slot 1" \
