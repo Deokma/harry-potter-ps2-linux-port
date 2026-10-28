@@ -10,11 +10,14 @@ unmeasured PAL scenes.
 
 Phase 2 builds this as `bench/` (C11, SDL2 + GLES 3.x, CMake,
 aarch64 cross-build), pushed and run with `scripts/deploy.sh` /
-`scripts/run_remote.sh`. **Implemented and verified off the device on
-2026-10-28.** [PHASE_2.md](PHASE_2.md) covers the design decisions, what
-was verified, and the day-one procedure. On the PC, qemu-user only proves the CPU tests
+`scripts/run_remote.sh`. On the PC, qemu-user only proves the CPU tests
 (T5-CPU, T6, T7) run and give correct results. **No timing from qemu
 counts**, and GLES tests can't run there at all.
+
+**Status:** implemented and verified off the device on 2026-10-28.
+[PHASE_2.md](PHASE_2.md) covers the design decisions, the verification,
+the day-one procedure and the known limitations. The usage reference is
+[bench/README.md](../bench/README.md).
 
 ## Run conditions (recorded in every result file)
 

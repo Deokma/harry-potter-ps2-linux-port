@@ -33,8 +33,13 @@ Phase reports live in `docs/PHASE_N.md`.
    (about 30–40 min).
 6. Commit `bench/results/<date>-<host>/`.
 7. Compare the results with the thresholds in
-   `docs/PHASE_2_DEVICE_BENCH.md`. Write PHASE_2 Part B and update PHASE_1
-   Part C. Then stop.
+   `docs/PHASE_2_DEVICE_BENCH.md`. A line that misses by more than 2×
+   reopens PHASE_1 Part C. Write PHASE_2 Part B, update Part C, then
+   **stop** for the user's review before Phase 3.
+
+**Build environment:** WSL Ubuntu 26.04 (see Environment). sudo there needs
+the user's password, and Claude never types passwords, so installing any
+new package is the user's step.
 
 **Independent of the device:** before the Phase 3 renderer design is
 frozen, capture PAL S03, S05 and S06 (PHASE_1 C7).
