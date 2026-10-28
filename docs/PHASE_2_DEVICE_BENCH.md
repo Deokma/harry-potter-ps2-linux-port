@@ -14,6 +14,11 @@ aarch64 cross-build), pushed and run with `scripts/deploy.sh` /
 (T5-CPU, T6, T7) run and give correct results. **No timing from qemu
 counts**, and GLES tests can't run there at all.
 
+**Status:** implemented and verified off the device on 2026-10-28.
+[PHASE_2.md](PHASE_2.md) covers the design decisions, the verification,
+the day-one procedure and the known limitations. The usage reference is
+[bench/README.md](../bench/README.md).
+
 ## Run conditions (recorded in every result file)
 
 - Firmware (muOS / Knulli / ROCKNIX + version), kernel; GL driver

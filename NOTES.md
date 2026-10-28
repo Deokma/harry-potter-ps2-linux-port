@@ -3,42 +3,46 @@
 Running log: decisions, open questions, commands that worked.
 Phase reports live in `docs/PHASE_N.md`.
 
-## Phase 2 status (2026-10-28, supersedes the Phase 1 handoff below)
-
-- **Phase 2 Part A is done** (`docs/PHASE_2.md`): `bench/` builds natively
-  and for aarch64 in WSL (`scripts/build_bench.sh`). Its self-tests pass,
-  natively and under qemu, with identical checksums, and every test ran
-  in quick mode. Timings from qemu or the desktop are not device timings.
-- **Part B waits for the device.**
-  1. You enable SSH key login on the device.
-  2. `scripts/deploy.sh`, then `scripts/run_remote.sh`.
-  3. I compare the results with PHASE_2_DEVICE_BENCH and update PHASE_1
-     Part C.
-- WSL now has the build tools (the user installed them on 2026-10-28;
-  this resolves Q1.4). `bench_gl` needs glibc 2.34 or newer on the device.
-
-## Current state and handoff (updated 2026-10-28 00:30)
+## Current state and handoff (updated 2026-10-28)
 
 **Where we are:**
 - Phase 0 done (`docs/PHASE_0.md`).
-- **Phase 1 done.** It now waits for the user's review and go-ahead.
-  - Part A: static analysis.
-  - Part B: every NTSC scene measured (`docs/PHASE_1.md` §B2a–B2h). The
-    PAL scenes S01–S08 are deferred (user decision, 2026-10-27).
-  - Part C: **conditional go**, written from the NTSC data only (§Part C).
-    C5 marks what the missing PAL scenes could change.
-- `docs/PHASE_2_DEVICE_BENCH.md` thresholds are filled in from Part C.
-- **Stop here.** Don't start Phase 2 until the user says go.
+- Phase 1 done (`docs/PHASE_1.md`): Part C gives a **conditional go**,
+  from NTSC data only. The PAL scenes S01–S08 are deferred (user decision,
+  2026-10-27).
+- **Phase 2 Part A done** (`docs/PHASE_2.md`, user go-ahead 2026-10-28):
+  - `bench/` builds natively and for aarch64 in WSL
+    (`scripts/build_bench.sh`);
+  - the self-tests pass, natively and under qemu, with identical
+    checksums;
+  - every test has run in quick mode.
 
-**Next steps once the user says go:**
-1. Phase 2, per `docs/PHASE_2_DEVICE_BENCH.md`:
-   - `bench/`, the aarch64 cross toolchain, `deploy.sh` / `run_remote.sh`;
-   - the critical tests are T1 (draw rate), T2 (fill) and T4 / T5
-     (uploads).
-2. Before the Phase 3 renderer design is frozen, capture PAL S03, S05 and
-   S06 (Part C, C7). Use the same per-scene routine as for N01–N03
-   (below). The PAL disc is `private\pcsx2\Game\HarryPotter.chd`, with its
-   own slot numbering.
+  Timings from qemu or the desktop are not device timings.
+- **Phase 2 Part B waits for the device.** The device had not arrived as
+  of 2026-10-28.
+
+**Next steps:**
+1. When the device arrives, follow `docs/PHASE_2.md` §A4:
+   1. The user enables SSH key login on the device.
+   2. Run `scripts/deploy.sh`, which prints the device's glibc (2.34 or
+      newer is needed).
+   3. Find the frontend stop and restart commands, for `BENCH_PRE` /
+      `BENCH_POST`.
+   4. Run `scripts/run_remote.sh`, first with `BENCH_QUICK=1`, then the
+      full run.
+2. Commit `bench/results/…`, then compare it with the thresholds in
+   `docs/PHASE_2_DEVICE_BENCH.md`. A line that misses by more than 2×
+   reopens PHASE_1 Part C. Then write PHASE_2 Part B and **stop** for the
+   user's review before Phase 3.
+3. Before the Phase 3 renderer design is frozen, capture PAL S03, S05 and
+   S06 (PHASE_1 C7). Use the per-scene routine below. The PAL disc is
+   `private\pcsx2\Game\HarryPotter.chd`, with its own slot numbering.
+
+**Build environment:**
+- The build tools are in WSL Ubuntu 26.04, installed by the user on
+  2026-10-28. This resolves Q1.4.
+- sudo there needs the user's password. Claude never types passwords, so
+  any new packages are the user's step.
 
 **Per-scene routine (what worked on 2026-10-27, Claude doing the clicks):**
 - Screen control is agreed **only** via
@@ -174,7 +178,8 @@ Phase reports live in `docs/PHASE_N.md`.
   `D:\ps2port-data\pcsx2-clean\bios\` and selected it (2026-10-27). It is
   still unconfirmed whether that is a dump of their own console. It stays
   outside the repo; never copy or commit BIOS files.
-- Q1.4 WSL2 install in progress on the user's side (reported 2026-10-27).
+- Resolved Q1.4: WSL2 Ubuntu 26.04 is installed, with the bench build
+  tools (2026-10-28).
 - Q1.6 Screen control: the computer-use tool only resolves apps from a
   list read at session start, so it can't target the portable PCSX2 in
   this session. A per-user Start-menu shortcut
