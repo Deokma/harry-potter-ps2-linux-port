@@ -7,42 +7,41 @@ Phase reports live in `docs/PHASE_N.md`.
 
 **Where we are:**
 - Phase 0 done (`docs/PHASE_0.md`).
-- Phase 1 done (`docs/PHASE_1.md`): Part C gives a **conditional go**,
-  from NTSC data only. The PAL scenes S01–S08 are deferred (user decision,
-  2026-10-27).
-- **Phase 2 Part A done** (`docs/PHASE_2.md`, user go-ahead 2026-10-28):
+- Phase 1 done and reviewed (`docs/PHASE_1.md`).
+  - Part C is a **conditional go**, written from NTSC data only. The PAL
+    scenes S01–S08 are deferred.
+  - The user approved Phase 2 on 2026-10-28.
+- **Phase 2 Part A done** (`docs/PHASE_2.md`).
   - `bench/` builds natively and for aarch64 in WSL
-    (`scripts/build_bench.sh`);
-  - the self-tests pass, natively and under qemu, with identical
-    checksums;
-  - every test has run in quick mode.
+    (`scripts/build_bench.sh`).
+  - Self-tests pass natively and under qemu, with identical checksums.
+  - Every test ran once in quick mode.
+  - Timings from qemu or the desktop are not device timings.
+- **Phase 2 Part B waits for the device.** The device hasn't arrived
+  (2026-10-28). Phase 2 isn't finished until Part B has run. Phase 3 does
+  not start before that, and not before the user says go.
 
-  Timings from qemu or the desktop are not device timings.
-- **Phase 2 Part B waits for the device.** The device had not arrived as
-  of 2026-10-28.
+**Next steps when the device arrives** (`docs/PHASE_2.md` §A4):
+1. The user enables SSH key login on the device. I never type passwords.
+2. `scripts/build_bench.sh`.
+3. `BENCH_HOST=root@<ip> scripts/deploy.sh`. It prints the device's glibc,
+   which must be 2.34 or newer for `bench_gl`.
+4. Find the firmware's commands to stop and restart its frontend. Pass
+   them as `BENCH_PRE` / `BENCH_POST`.
+5. A sanity pass with `BENCH_QUICK=1 scripts/run_remote.sh`, then the
+   full run with `BENCH_GOVERNOR=performance scripts/run_remote.sh`
+   (about 30–40 min).
+6. Commit `bench/results/<date>-<host>/`.
+7. Compare the results with the thresholds in
+   `docs/PHASE_2_DEVICE_BENCH.md`. Write PHASE_2 Part B and update PHASE_1
+   Part C. Then stop.
 
-**Next steps:**
-1. When the device arrives, follow `docs/PHASE_2.md` §A4:
-   1. The user enables SSH key login on the device.
-   2. Run `scripts/deploy.sh`, which prints the device's glibc (2.34 or
-      newer is needed).
-   3. Find the frontend stop and restart commands, for `BENCH_PRE` /
-      `BENCH_POST`.
-   4. Run `scripts/run_remote.sh`, first with `BENCH_QUICK=1`, then the
-      full run.
-2. Commit `bench/results/…`, then compare it with the thresholds in
-   `docs/PHASE_2_DEVICE_BENCH.md`. A line that misses by more than 2×
-   reopens PHASE_1 Part C. Then write PHASE_2 Part B and **stop** for the
-   user's review before Phase 3.
-3. Before the Phase 3 renderer design is frozen, capture PAL S03, S05 and
-   S06 (PHASE_1 C7). Use the per-scene routine below. The PAL disc is
-   `private\pcsx2\Game\HarryPotter.chd`, with its own slot numbering.
-
-**Build environment:**
-- The build tools are in WSL Ubuntu 26.04, installed by the user on
-  2026-10-28. This resolves Q1.4.
-- sudo there needs the user's password. Claude never types passwords, so
-  any new packages are the user's step.
+**Independent of the device:** before the Phase 3 renderer design is
+frozen, capture PAL S03, S05 and S06 (PHASE_1 C7).
+- They need savestates from the user (`docs/SAVESTATES.md`).
+- Use the per-scene routine below.
+- The PAL disc is `private\pcsx2\Game\HarryPotter.chd`, with its own slot
+  numbering.
 
 **Per-scene routine (what worked on 2026-10-27, Claude doing the clicks):**
 - Screen control is agreed **only** via
@@ -119,8 +118,8 @@ Phase reports live in `docs/PHASE_N.md`.
 | Python | 3.14.0 (has `lzma`, `zlib`, `compression.zstd`) |
 | git | 2.55.0.windows.5 |
 | CMake | present (`D:\Programs\CMake`) |
-| Missing | WSL (not installed), gcc/clang/MSVC, ninja, make, 7z, xorriso, qemu, chdman |
-| Virtualization | enabled in firmware, hypervisor present (WSL2 can run) |
+| WSL2 (since 2026-10-28) | Ubuntu 26.04.1, WSLg. GCC 15.2 native and `aarch64-linux-gnu`, qemu-user 10.2, CMake 4.2.3, Ninja 1.13.2, SDL 2.32.10, Mesa 26.0.8 (llvmpipe). Repo at `/mnt/d/Projects/anbernic/PS2Recompiler`. sudo needs the user's password |
+| Missing on Windows | gcc / clang (MSVC exists in VS 18 but is unused), 7z, xorriso, chdman |
 | PCSX2 | 2.6.3 portable, inside the local game bundle folder |
 
 ## Decisions
@@ -172,14 +171,26 @@ Phase reports live in `docs/PHASE_N.md`.
   lists what S01–S08 could change, and C7 makes S03 / S05 / S06 a gate
   before the Phase 3 renderer design.
 
+- **D2.1–D2.9 Benchmark design:** see `docs/PHASE_2.md` §A2.
+  - `bench_cpu` is static.
+  - `bench_gl` links only against libc and loads SDL2 with `dlopen`.
+  - `_GNU_SOURCE` is confined to one file, and builds use no FMA.
+  - FPU-mode switches are noinline asm with memory clobbers.
+  - T6 gets exact guest counts from a counting build.
+  - Device access is SSH key only.
+
 ## Open questions
 
 - Q0.3 BIOS: the user placed the bundle's SCPH-50004 (EUR v1.90) files in
   `D:\ps2port-data\pcsx2-clean\bios\` and selected it (2026-10-27). It is
   still unconfirmed whether that is a dump of their own console. It stays
   outside the repo; never copy or commit BIOS files.
-- Resolved Q1.4: WSL2 Ubuntu 26.04 is installed, with the bench build
-  tools (2026-10-28).
+- Q2.1 Which firmware will the device run (muOS / Knulli / ROCKNIX)? Its
+  glibc version (≥ 2.34 for `bench_gl`), its frontend stop / restart
+  commands for `BENCH_PRE` / `BENCH_POST`, and its GL driver (Mali blob or
+  Panfrost) all depend on it.
+- Resolved Q1.4: WSL2 Ubuntu 26.04 installed, and the build packages were
+  added by the user (2026-10-28).
 - Q1.6 Screen control: the computer-use tool only resolves apps from a
   list read at session start, so it can't target the portable PCSX2 in
   this session. A per-user Start-menu shortcut
@@ -281,4 +292,14 @@ python -I scripts/vu1_loops.py private/extract/SLUS-20826/files/SLUS_208.26 \
 python -I scripts/cdvd_reads.py D:/ps2port-data/reports/A01_emulog.txt \
     private/extract/SLUS-20826/layout.tsv --after "Loaded state from slot 1" \
     --json D:/ps2port-data/reports/A01_reads.json
+
+# Phase 2 (in WSL, from /mnt/d/Projects/anbernic/PS2Recompiler)
+scripts/build_bench.sh                 # both builds, self-tests (qemu), quick CPU runs
+scripts/build_bench.sh --gl-smoke      # + bench_gl --quick in a WSLg window (llvmpipe)
+qemu-aarch64 bench/build/aarch64/bench_cpu --selftest
+BENCH_HOST=root@<ip> scripts/deploy.sh
+BENCH_HOST=root@<ip> BENCH_QUICK=1 BENCH_PRE='...' BENCH_POST='...' scripts/run_remote.sh
+BENCH_HOST=root@<ip> BENCH_GOVERNOR=performance BENCH_PRE='...' BENCH_POST='...' scripts/run_remote.sh
+# From Git Bash, call WSL with path conversion off:
+#   MSYS_NO_PATHCONV=1 wsl -e bash -c 'cd /mnt/d/Projects/anbernic/PS2Recompiler && scripts/build_bench.sh'
 ```
