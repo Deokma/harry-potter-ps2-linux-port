@@ -20,6 +20,9 @@ extern gl_env g_gl;
 int gl_events(void);           /* pump SDL events; 1 if the user quit */
 void gl_swap(void);
 void gl_check(const char *where);
+void gl_clear_errors(void);
+/* first pending GL error (0 if none), logged with `where`; drains the rest */
+unsigned gl_take_error(const char *where);
 
 /* Program from GLSL ES 3.00 bodies; the "#version 300 es" header and
    precision are added. `ext` is an optional #extension line. Attribute 0

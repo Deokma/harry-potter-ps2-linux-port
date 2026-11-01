@@ -67,4 +67,17 @@ and `BENCH_POST=...`. For a first sanity pass, use `BENCH_QUICK=1`.
 | `--audio-s S` | `bench_gl` only: length of each audio run |
 
 Results are written as `<date>-<firmware>-<cpu|gl|thermal>.json`, plus a
-CSV of the same rows.
+CSV of the same rows. T2 and T4 check GL errors per variant: a failing
+variant logs `GL error 0x.... in <variant>` and carries
+`"gl_error":"0x...."` in its parameters, so its numbers can be excluded.
+
+Debug switches for `bench_gl` (environment, not for normal runs):
+
+| Variable | Effect |
+|---|---|
+| `BENCH_T2_ONLY=<name>` | run only T2 modes whose name contains `<name>` |
+| `BENCH_NO_TIMER=1` | no GPU timer queries (wall time only) |
+
+On the RG40XX H (Knulli, Mali-G31 r20p0) GPU timer queries around
+`glCopyTexSubImage2D` raise `GL_OUT_OF_MEMORY` and drop the frame's work,
+so T2's ping-pong mode is timed by wall clock only.

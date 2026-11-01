@@ -41,6 +41,9 @@ static void upload_test(int size, int r8, int pbo)
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
     }
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    char var[48], par[220];
+    snprintf(var, sizeof var, "%s_%d_%s", r8 ? "r8" : "rgba8", size, pbo ? "pbo" : "direct");
+    unsigned err = gl_take_error(var); /* allocation of the pool / buffer */
     samples us = { { 0 }, 0 }, mbs = { { 0 }, 0 };
     for (int r = 0; r < g_opts.reps; r++) {
         glFinish();
@@ -70,12 +73,11 @@ static void upload_test(int size, int r8, int pbo)
         samples_add(&mbs, (double)bytes * m / dt / 1e6);
         gl_events();
     }
-    char var[48], par[200];
-    snprintf(var, sizeof var, "%s_%d_%s", r8 ? "r8" : "rgba8", size, pbo ? "pbo" : "direct");
+    unsigned err2 = gl_take_error(var); /* the uploads themselves */
     snprintf(par, sizeof par,
              "\"format\":\"%s\",\"size\":%d,\"path\":\"%s\",\"uploads\":%d,"
-             "\"partb_new_rgba8_bytes\":1.6e6,\"threshold_ms\":2",
-             r8 ? "r8" : "rgba8", size, pbo ? "pbo" : "direct", m);
+             "\"partb_new_rgba8_bytes\":1.6e6,\"threshold_ms\":2,\"gl_error\":\"0x%04x\"",
+             r8 ? "r8" : "rgba8", size, pbo ? "pbo" : "direct", m, err ? err : err2);
     result_add("T4", var, "us_per_upload", "us", &us, par);
     result_add("T4", var, "MBps", "MB/s", &mbs, par);
     if (!r8)
@@ -103,6 +105,7 @@ void t4_run(void)
     glDisable(GL_DEPTH_TEST);
     glActiveTexture(GL_TEXTURE0);
     glBindVertexArray(q.vao);
+    gl_check("t4 setup");
     static const int sizes[] = { 32, 64, 128, 256, 512 };
     for (int r8 = 0; r8 < 2; r8++)
         for (int s = 0; s < 5; s++)

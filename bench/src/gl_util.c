@@ -30,6 +30,23 @@ void gl_check(const char *where)
     }
 }
 
+void gl_clear_errors(void)
+{
+    for (int i = 0; i < 16 && glGetError() != GL_NO_ERROR; i++)
+        ;
+}
+
+unsigned gl_take_error(const char *where)
+{
+    GLenum first = glGetError();
+    if (first == GL_NO_ERROR)
+        return 0;
+    gl_clear_errors();
+    fprintf(stderr, "GL error 0x%04x in %s\n", first, where);
+    note_str("gl.error", where);
+    return first;
+}
+
 const char *const VS_BASIC =
     "layout(location = 0) in vec2 a_pos;\n"
     "layout(location = 1) in vec2 a_uv;\n"
@@ -170,8 +187,11 @@ void gl_fbo_free(gl_fbo *f)
 
 void gl_timer_begin(GLuint *q)
 {
+    static int off = -1; /* debug switch: BENCH_NO_TIMER=1 */
+    if (off < 0)
+        off = getenv("BENCH_NO_TIMER") != NULL;
     *q = 0;
-    if (!g_gl.ext_timer || !glGetQueryObjectui64vEXT)
+    if (off || !g_gl.ext_timer || !glGetQueryObjectui64vEXT)
         return;
     GLint disjoint;
     glGetIntegerv(GL_GPU_DISJOINT_EXT, &disjoint); /* clears the flag */

@@ -5,8 +5,9 @@
      program (8 programs), fbo (switch every 50 draws),
      mix: the Part B state mix (82 % textured, 74 % blended, a uniform per
           draw for colour / CLUT, program changes, 6 RT switches per frame).
-   Vertex paths: client arrays, a streaming VBO ring (one BufferSubData per
-   draw), one static VBO with offsets. mix_gs_t1 / mix_gs_t2 add the
+   Vertex paths: client arrays, a streaming VBO (the frame's vertices in
+   one orphaning glBufferData, then draws at offsets), one static VBO with
+   offsets. mix_gs_t1 / mix_gs_t2 add the
    conversion of GS PACKED vertices (48 bytes each) to GL vertices, on the
    render thread or on a producer thread that runs one frame ahead. */
 #define _POSIX_C_SOURCE 200809L
@@ -19,7 +20,7 @@
 #define MAXQ 4000
 #define RT_W 640
 #define RT_H 448
-#define RING_BYTES (4u << 20)
+#define STREAM_BYTES (MAXQ * 64)
 
 enum { P_CLIENT, P_STREAM, P_STATIC, P_COUNT };
 static const char *pname[P_COUNT] = { "client", "stream", "static" };
@@ -38,8 +39,7 @@ static struct {
     GLint ucol_tex[8], ucol_col;
     GLuint pool[64];
     gl_fbo fb[2];
-    GLuint vbo_static, vbo_ring, vao_static, vao_ring;
-    GLuint ring_off;
+    GLuint vbo_static, vbo_stream, vao_static, vao_stream;
     mix_op ops[MAXQ];
 } S;
 
@@ -105,11 +105,11 @@ static void setup(void)
     glEnableVertexAttribArray(1);
     glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 16, (void *)8);
 
-    glGenVertexArrays(1, &S.vao_ring);
-    glBindVertexArray(S.vao_ring);
-    glGenBuffers(1, &S.vbo_ring);
-    glBindBuffer(GL_ARRAY_BUFFER, S.vbo_ring);
-    glBufferData(GL_ARRAY_BUFFER, RING_BYTES, NULL, GL_STREAM_DRAW);
+    glGenVertexArrays(1, &S.vao_stream);
+    glBindVertexArray(S.vao_stream);
+    glGenBuffers(1, &S.vbo_stream);
+    glBindBuffer(GL_ARRAY_BUFFER, S.vbo_stream);
+    glBufferData(GL_ARRAY_BUFFER, STREAM_BYTES, NULL, GL_STREAM_DRAW);
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 16, (void *)0);
     glEnableVertexAttribArray(1);
@@ -127,9 +127,9 @@ static void teardown(void)
     gl_fbo_free(&S.fb[0]);
     gl_fbo_free(&S.fb[1]);
     glDeleteBuffers(1, &S.vbo_static);
-    glDeleteBuffers(1, &S.vbo_ring);
+    glDeleteBuffers(1, &S.vbo_stream);
     glDeleteVertexArrays(1, &S.vao_static);
-    glDeleteVertexArrays(1, &S.vao_ring);
+    glDeleteVertexArrays(1, &S.vao_stream);
 }
 
 static void mix_plan(int n)
@@ -166,16 +166,13 @@ static void gs_to_gl(const uint32_t *g, float *o)
     }
 }
 
-static GLint ring_push(const float *v)
+/* The frame's vertices in one upload, into a freshly orphaned buffer.
+   One glBufferSubData per draw into a buffer the GPU is still reading took
+   ~21 ms per draw on the Mali-G31 r20p0 driver and made the RG40XX H stop
+   responding (2026-11-01), so the per-draw variant is gone. */
+static void stream_frame(const float *all, int n)
 {
-    if (S.ring_off + 64 > RING_BYTES) {
-        glBufferData(GL_ARRAY_BUFFER, RING_BYTES, NULL, GL_STREAM_DRAW); /* orphan */
-        S.ring_off = 0;
-    }
-    glBufferSubData(GL_ARRAY_BUFFER, S.ring_off, 64, v);
-    GLint first = (GLint)(S.ring_off / 16);
-    S.ring_off += 64;
-    return first;
+    glBufferData(GL_ARRAY_BUFFER, (GLsizeiptr)n * 64, all, GL_STREAM_DRAW);
 }
 
 /* conversion output for the gs variants: [frame parity][quad][16 floats] */
@@ -194,8 +191,8 @@ static void bind_path(int path)
         glEnableVertexAttribArray(0);
         glEnableVertexAttribArray(1);
     } else if (path == P_STREAM) {
-        glBindVertexArray(S.vao_ring);
-        glBindBuffer(GL_ARRAY_BUFFER, S.vbo_ring);
+        glBindVertexArray(S.vao_stream);
+        glBindBuffer(GL_ARRAY_BUFFER, S.vbo_stream);
     } else {
         glBindVertexArray(S.vao_static);
     }
@@ -218,9 +215,18 @@ static double draw_frame(const draw_cfg *c)
     if (c->variant == V_BLEND)
         glEnable(GL_BLEND);
     double t0 = now_s();
+    if (c->path == P_STREAM) {
+        const float *all = c->src;
+        if (c->gs == 1) {
+            for (int i = 0; i < n; i++)
+                gs_to_gl(&S.gsverts[i * 48], conv_buf[0] + i * 16);
+            all = conv_buf[0];
+        }
+        stream_frame(all, n);
+    }
     for (int i = 0; i < n; i++) {
         const float *v = c->src + i * 16;
-        if (c->gs == 1)
+        if (c->gs == 1 && c->path != P_STREAM)
             gs_to_gl(&S.gsverts[i * 48], conv_buf[0] + i * 16), v = conv_buf[0] + i * 16;
         switch (c->variant) {
         case V_UNIFORM:
@@ -279,7 +285,7 @@ static double draw_frame(const draw_cfg *c)
             glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 16, v + 2);
             glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
         } else if (c->path == P_STREAM) {
-            glDrawArrays(GL_TRIANGLE_STRIP, ring_push(v), 4);
+            glDrawArrays(GL_TRIANGLE_STRIP, i * 4, 4);
         } else {
             glDrawArrays(GL_TRIANGLE_STRIP, i * 4, 4);
         }

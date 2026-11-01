@@ -1,0 +1,88 @@
+running on root@192.168.0.165 (keep this connection open; the full run takes ~30-40 min)
+run_day1 Sun Nov  1 11:59:44 CET 2026 quick=1 governor=unchanged
+Linux KNULLI 4.9.170 #12 SMP PREEMPT Mon Dec 8 15:53:56 CST 2025 aarch64 GNU/Linux
+== ./bench_cpu --quick --out results --tests T8
+T8: system
+  T8   memory                             mem_available_mb              823.9  [min 823.9 max 823.9] MB
+  T8   sd_seq_1MiB                        read_MBps                       330  [min 330 max 330] MB/s
+  T8   sd_rand_32KiB                      read_MBps                     187.1  [min 187.1 max 187.1] MB/s
+  T8   sd_rand_32KiB                      reads_per_s                    5710  [min 5710 max 5710] 1/s
+wrote results/20261101-115946-__Batocera.linux_gladiator-ii__-cpu.json
+wrote results/20261101-115946-__Batocera.linux_gladiator-ii__-cpu.csv
+== ./bench_gl --quick --out results --tests T1,T2,T4,T5,T3
+GL: ARM | Mali-G31 | OpenGL ES 3.2 v1.r20p0-01rel0.8ec337de4ddab3365a32cff58063a9da | 640x480
+T1: draw-call submission rate
+  T1   client_none_n100                   us_per_draw                    8.25  [min 8.25 max 8.25] us
+  T1   client_none_n100                   frame_ms                      2.069  [min 2.069 max 2.069] ms
+  T1   client_uniform_n100                us_per_draw                   9.652  [min 9.652 max 9.652] us
+  T1   client_uniform_n100                frame_ms                      1.759  [min 1.759 max 1.759] ms
+  T1   client_texbind_n100                us_per_draw                   11.72  [min 11.72 max 11.72] us
+  T1   client_texbind_n100                frame_ms                      1.971  [min 1.971 max 1.971] ms
+  T1   client_blend_n100                  us_per_draw                    9.78  [min 9.78 max 9.78] us
+  T1   client_blend_n100                  frame_ms                      1.814  [min 1.814 max 1.814] ms
+  T1   client_program_n100                us_per_draw                   11.36  [min 11.36 max 11.36] us
+  T1   client_program_n100                frame_ms                      1.892  [min 1.892 max 1.892] ms
+  T1   client_fbo_n100                    us_per_draw                   9.803  [min 9.803 max 9.803] us
+  T1   client_fbo_n100                    frame_ms                      7.833  [min 7.833 max 7.833] ms
+  T1   client_mix_n100                    us_per_draw                   16.01  [min 16.01 max 16.01] us
+  T1   client_mix_n100                    frame_ms                      2.073  [min 2.073 max 2.073] ms
+  T1   stream_none_n100                   us_per_draw               2.068e+04  [min 2.068e+04 max 2.068e+04] us
+  T1   stream_none_n100                   frame_ms                       2110  [min 2110 max 2110] ms
+  T1   stream_uniform_n100                us_per_draw               2.058e+04  [min 2.058e+04 max 2.058e+04] us
+  T1   stream_uniform_n100                frame_ms                       2100  [min 2100 max 2100] ms
+  T1   stream_texbind_n100                us_per_draw               2.063e+04  [min 2.063e+04 max 2.063e+04] us
+  T1   stream_texbind_n100                frame_ms                       2105  [min 2105 max 2105] ms
+  T1   stream_blend_n100                  us_per_draw               2.059e+04  [min 2.059e+04 max 2.059e+04] us
+  T1   stream_blend_n100                  frame_ms                       2101  [min 2101 max 2101] ms
+  T1   stream_program_n100                us_per_draw               2.065e+04  [min 2.065e+04 max 2.065e+04] us
+  T1   stream_program_n100                frame_ms                       2107  [min 2107 max 2107] ms
+  T1   stream_fbo_n100                    us_per_draw               2.058e+04  [min 2.058e+04 max 2.058e+04] us
+  T1   stream_fbo_n100                    frame_ms                       2100  [min 2100 max 2100] ms
+  T1   stream_mix_n100                    us_per_draw               2.066e+04  [min 2.066e+04 max 2.066e+04] us
+  T1   stream_mix_n100                    frame_ms                       2108  [min 2108 max 2108] ms
+  T1   static_none_n100                   us_per_draw                   4.819  [min 4.819 max 4.819] us
+  T1   static_none_n100                   frame_ms                      1.367  [min 1.367 max 1.367] ms
+  T1   static_uniform_n100                us_per_draw                   4.973  [min 4.973 max 4.973] us
+  T1   static_uniform_n100                frame_ms                      1.495  [min 1.495 max 1.495] ms
+  T1   static_texbind_n100                us_per_draw                   7.501  [min 7.501 max 7.501] us
+  T1   static_texbind_n100                frame_ms                      1.792  [min 1.792 max 1.792] ms
+  T1   static_blend_n100                  us_per_draw                   9.512  [min 9.512 max 9.512] us
+  T1   static_blend_n100                  frame_ms                      2.006  [min 2.006 max 2.006] ms
+  T1   static_program_n100                us_per_draw                    8.55  [min 8.55 max 8.55] us
+  T1   static_program_n100                frame_ms                      1.664  [min 1.664 max 1.664] ms
+  T1   static_fbo_n100                    us_per_draw                   8.229  [min 8.229 max 8.229] us
+  T1   static_fbo_n100                    frame_ms                      1.502  [min 1.502 max 1.502] ms
+  T1   static_mix_n100                    us_per_draw                   17.37  [min 17.37 max 17.37] us
+  T1   static_mix_n100                    frame_ms                       2.26  [min 2.26 max 2.26] ms
+  T1   stream_mix_gs_t1_n100              us_per_draw               2.064e+04  [min 2.064e+04 max 2.064e+04] us
+  T1   stream_mix_gs_t1_n100              frame_ms                       2106  [min 2106 max 2106] ms
+  T1   stream_mix_gs_t2_n100              us_per_draw               2.066e+04  [min 2.066e+04 max 2.066e+04] us
+  T1   stream_mix_gs_t2_n100              frame_ms                       2108  [min 2108 max 2108] ms
+  T1   client_none_n877                   us_per_draw                   6.164  [min 6.164 max 6.164] us
+  T1   client_none_n877                   frame_ms                      8.187  [min 8.187 max 8.187] ms
+  T1   client_uniform_n877                us_per_draw                   6.646  [min 6.646 max 6.646] us
+  T1   client_uniform_n877                frame_ms                       8.46  [min 8.46 max 8.46] ms
+  T1   client_texbind_n877                us_per_draw                   6.574  [min 6.574 max 6.574] us
+  T1   client_texbind_n877                frame_ms                       8.51  [min 8.51 max 8.51] ms
+  T1   client_blend_n877                  us_per_draw                   8.437  [min 8.437 max 8.437] us
+  T1   client_blend_n877                  frame_ms                      10.11  [min 10.11 max 10.11] ms
+  T1   client_program_n877                us_per_draw                    10.4  [min 10.4 max 10.4] us
+  T1   client_program_n877                frame_ms                      12.07  [min 12.07 max 12.07] ms
+  T1   client_fbo_n877                    us_per_draw                   9.246  [min 9.246 max 9.246] us
+  T1   client_fbo_n877                    frame_ms                      8.749  [min 8.749 max 8.749] ms
+  T1   client_mix_n877                    us_per_draw                   10.62  [min 10.62 max 10.62] us
+  T1   client_mix_n877                    frame_ms                      10.17  [min 10.17 max 10.17] ms
+  T1   stream_none_n877                   us_per_draw               2.101e+04  [min 2.101e+04 max 2.101e+04] us
+  T1   stream_none_n877                   frame_ms                  1.843e+04  [min 1.843e+04 max 1.843e+04] ms
+  T1   stream_uniform_n877                us_per_draw               2.105e+04  [min 2.105e+04 max 2.105e+04] us
+  T1   stream_uniform_n877                frame_ms                  1.846e+04  [min 1.846e+04 max 1.846e+04] ms
+  T1   stream_texbind_n877                us_per_draw               2.103e+04  [min 2.103e+04 max 2.103e+04] us
+  T1   stream_texbind_n877                frame_ms                  1.845e+04  [min 1.845e+04 max 1.845e+04] ms
+  T1   stream_blend_n877                  us_per_draw               2.106e+04  [min 2.106e+04 max 2.106e+04] us
+  T1   stream_blend_n877                  frame_ms                  1.847e+04  [min 1.847e+04 max 1.847e+04] ms
+  T1   stream_program_n877                us_per_draw               2.102e+04  [min 2.102e+04 max 2.102e+04] us
+  T1   stream_program_n877                frame_ms                  1.844e+04  [min 1.844e+04 max 1.844e+04] ms
+Connection to 192.168.0.165 closed by remote host.
+ssh: connect to host 192.168.0.165 port 2222: Connection timed out
+tar: This does not look like a tar archive
+tar: Exiting with failure status due to previous errors

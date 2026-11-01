@@ -13,6 +13,9 @@ if [ -f .env ]; then
             \"*\") val=${val#\"}; val=${val%\"} ;;
             \'*\') val=${val#\'}; val=${val%\'} ;;
         esac
-        [ -z "${!key+x}" ] && export "$key=$val"
+        if [ -z "${!key+x}" ]; then
+            export "$key=$val"
+        fi
     done < .env
 fi
+:  # never fail under the callers' set -e
