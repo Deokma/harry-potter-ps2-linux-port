@@ -429,6 +429,12 @@ def analyze_code(elf, data):
     jal_in_code = {t for t in jal_targets if in_code(t)}
     starts_low = jal_in_code | fn_ptr_targets
     starts_mid = starts_low | prologues
+    # conservative boundaries for a function map: a prologue only counts as
+    # a start right after a return (`jr ra` + delay slot), never mid-body
+    starts_map = starts_low | {p for p in prologues
+                               if words.get(p - 8) == JR_RA}
+    if in_code(elf["entry"]):
+        starts_map.add(elf["entry"])
     code_bytes = sum(hi - lo for lo, hi in ranges)
 
     # syscall stubs: number -> (stub entry, how many jal call it)
@@ -444,6 +450,7 @@ def analyze_code(elf, data):
     stubs.sort(key=lambda s: (s["number"] is None, s["number"] or 0))
 
     return {
+        "_function_map": {"starts": sorted(starts_map), "ranges": ranges},
         "code_sections": [s["name"] for s in code_secs],
         "code_bytes": code_bytes,
         "instructions": len(words),
@@ -568,6 +575,7 @@ def main(argv=None):
     out.mkdir(parents=True, exist_ok=True)
 
     code = analyze_code(elf, data)
+    code.pop("_function_map")  # internal; see export_function_map.py
     vu = analyze_vu(elf, data)
     strings, string_classes = analyze_strings(elf, data)
     report = {
