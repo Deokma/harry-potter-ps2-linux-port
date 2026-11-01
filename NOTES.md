@@ -3,39 +3,38 @@
 Running log: decisions, open questions, commands that worked.
 Phase reports live in `docs/PHASE_N.md`.
 
-## Current state and handoff (updated 2026-10-28)
+## Current state and handoff (updated 2026-11-01)
 
 **Where we are:**
 - Phase 0 done (`docs/PHASE_0.md`).
-- Phase 1 done and reviewed (`docs/PHASE_1.md`).
-  - Part C is a **conditional go**, written from NTSC data only. The PAL
-    scenes S01–S08 are deferred.
-  - The user approved Phase 2 on 2026-10-28.
-- **Phase 2 Part A done** (`docs/PHASE_2.md`).
-  - `bench/` builds natively and for aarch64 in WSL
-    (`scripts/build_bench.sh`).
-  - Self-tests pass natively and under qemu, with identical checksums.
-  - Every test ran once in quick mode.
-  - Timings from qemu or the desktop are not device timings.
-- **Phase 2 Part B waits for the device.** The device hasn't arrived
-  (2026-10-28). Phase 2 isn't finished until Part B has run. Phase 3 does
-  not start before that, and not before the user says go.
+- Phase 1 done (`docs/PHASE_1.md`). Part C is a **conditional go**.
+  - C8 (2026-11-01) records that every condition is met on the device.
+  - It recommends upgrading to **go for Phase 3**. That's pending the
+    user's review.
+- **Phase 2 done** (`docs/PHASE_2.md`).
+  - Part A: the bench suite.
+  - Part B: the device run on the **RG40XX H** (Knulli), with results
+    against the thresholds, two driver traps and the renderer rules (B5).
+- **Stopped for the user's review.** Phase 3 starts only when the user
+  says go. Before the renderer design is frozen, PAL S03, S05 and S06
+  must be captured (routine below).
 
-**Next steps when the device arrives** (`docs/PHASE_2.md` §A4):
-1. The user enables SSH key login on the device. I never type passwords.
-2. `scripts/build_bench.sh`.
-3. `BENCH_HOST=root@<ip> scripts/deploy.sh`. It prints the device's glibc,
-   which must be 2.34 or newer for `bench_gl`.
-4. Find the firmware's commands to stop and restart its frontend. Pass
-   them as `BENCH_PRE` / `BENCH_POST`.
-5. A sanity pass with `BENCH_QUICK=1 scripts/run_remote.sh`, then the
-   full run with `BENCH_GOVERNOR=performance scripts/run_remote.sh`
-   (about 30–40 min).
-6. Commit `bench/results/<date>-<host>/`.
-7. Compare the results with the thresholds in
-   `docs/PHASE_2_DEVICE_BENCH.md`. A line that misses by more than 2×
-   reopens PHASE_1 Part C. Write PHASE_2 Part B, update Part C, then
-   **stop** for the user's review before Phase 3.
+**Device access (RG40XX H, 192.168.0.165, Knulli):**
+- Settings live in `.env` (git-ignored; template `.env.example`): host,
+  port 2222, key, `BENCH_DIR`, frontend stop / start, `XDG_RUNTIME_DIR`.
+- **After every device reboot** the user runs, in PowerShell, typing the
+  device password:
+  `cmd /c "ssh root@192.168.0.165 sh -s < D:\Projects\anbernic\PS2Recompiler\scripts\device_ssh_setup.sh"`.
+  That starts the key-login SSH on port 2222. Claude never types
+  passwords.
+- Run the scripts from Git Bash: `bash scripts/deploy.sh`,
+  `BENCH_QUICK=1 bash scripts/run_remote.sh`. Build in WSL:
+  `wsl -e bash -lc 'cd /mnt/d/Projects/anbernic/PS2Recompiler && scripts/build_bench.sh'`.
+- **Driver traps** (PHASE_2 B2):
+  - never sub-update a GL buffer per draw: it hung the device;
+  - no GPU timer queries around framebuffer copies.
+- The device's root password was posted in chat on 2026-11-01. The user
+  said they will change it. Never use it.
 
 **Build environment:** WSL Ubuntu 26.04 (see Environment). sudo there needs
 the user's password, and Claude never types passwords, so installing any

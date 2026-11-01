@@ -4,7 +4,9 @@ Status: **Part A (static analysis) done. Part B (measurements) approved
 2026-10-27 with additions a–d; tooling validated on the pilot capture
 (B2a); all NTSC scenes measured (B2b–B2h: N01–N03, I01, F01, A01); the PAL
 scenes S01–S08 are deferred (user decision). Part C: conditional go,
-written from the NTSC data only (2026-10-27).**
+written from the NTSC data only (2026-10-27). C8 (2026-11-01): every
+condition met on the device; recommended upgrade to go for Phase 3,
+pending review.**
 Primary disc: NTSC-U SLUS-20826. Secondary: PAL SLES-52055. The boot ELF is
 the same file on both.
 
@@ -925,6 +927,57 @@ Compared with A10:
      fetch on the chosen driver;
    - T6 below about 150 M guest instructions/s on one A53 (half of the
      ≈295 M/s threshold).
+
+### C8. Update from the device (2026-11-01, PHASE_2 Part B)
+
+Measured on an **RG40XX H** (same H700 SoC; Knulli, Mali r20p0). Details
+and limits are in [PHASE_2.md](PHASE_2.md) B3–B6. C1–C7 above stay as
+written on 2026-10-27.
+
+**The C7 conditions:**
+
+| Condition (C7.2 / C7.4) | Device result | Status |
+|---|---|---|
+| T1 ≤ 11 µs per draw; no-go above ~22 µs | **7.9–9.0 µs** at the Part B mix, 877 draws = 7.0–7.9 ms / frame | met |
+| T2 ≥ 136 Mpx/s at the gameplay mix | **1.1–1.5 Gpx/s**; gameplay uses ≈ 9 % of GPU time | met |
+| T5 conversion in budget, CPU or GPU | CPU 3–5× over; **GPU palette lookup passes** (no measurable cost opaque) | met via GPU |
+| T6 ≥ 295 M guest instr/s; no-go below ~150 | **327–470 M/s** (synthetic kernels) | met |
+| T7 ≤ 126 ns per vertex | **49 ns unlit, 116 ns lit** (native NEON) | met |
+| Framebuffer fetch available for feedback blends | **yes**: `GL_ARM_shader_framebuffer_fetch`, 160–207 Mpx/s | met |
+
+**C4 with device numbers** (gameplay p95, 30 fps, at the sustained
+1.416 GHz):
+
+| Line | C4 central / pessimistic | Measured |
+|---|---|---|
+| EE | 0.26 / 0.71 | 0.22–0.58 |
+| VU1 | 0.25 / 1.10 (translated) | 0.21–0.49 as native NEON; translated still unmeasured |
+| GS front end + GL | 0.33 / 0.62 | 0.23–0.25 |
+| IOP + SPU2 + OS | 0.15 / 0.25 | not measured |
+| **CPU total, of 4** | ≈ 1.0 / 2.7 | **≈ 0.8–1.6** |
+| GPU fill | ≈ 25 % / 38 % | **≈ 9 %** (31 % bound) |
+
+**C6 changes:**
+- **#1 Draw submission: high → medium.** It's within budget for NTSC. A
+  doubled PAL draw count would need ~1.5× batching.
+- **#2 VU1: medium-high → medium.** The HLE route fits. Translated
+  microcode is a Phase 3 question.
+- **#4 Textures: medium → medium-low.** The R8 + GPU palette path fits;
+  hash cost and de-swizzle placement are still open.
+- **#8 GPU fill: medium-low → low.**
+- **New, medium: driver behaviour.** The Mali r20p0 driver turns
+  per-draw buffer sub-updates into ~21 ms stalls that hung the device,
+  and drops work when timer queries surround framebuffer copies. Both
+  are avoidable, and they're rules 1–2 in PHASE_2 B5.
+- **New, low: thermal.** Sustained 4-core load throttles to 1.416 GHz
+  (−6 %), which C8 already budgets.
+- #3 (PAL scenes) is unchanged and is now the largest single uncertainty.
+
+**Recommended verdict (pending your review): go for Phase 3**, with three
+conditions:
+1. PAL S03, S05 and S06 before the renderer design is frozen.
+2. A renderer built to PHASE_2 B5.
+3. The Phase 3 prototype confirming T6 / T7 with real translated code.
 
 ## Open items
 

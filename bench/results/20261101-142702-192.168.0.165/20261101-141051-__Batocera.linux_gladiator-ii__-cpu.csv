@@ -1,0 +1,5 @@
+test,variant,metric,unit,median,min,max,n,params
+T8,memory,mem_available_mb,MB,824.594,824.594,824.594,1,"""threshold_mb"":400"
+T8,sd_seq_1MiB,read_MBps,MB/s,365.007,352.756,367.055,3,"""file_mb"":128,""own_file"":true,""a01_mean_kBps"":85,""a01_peak_kBps"":730"
+T8,sd_rand_32KiB,read_MBps,MB/s,19.3516,18.6019,19.4861,3,"""file_mb"":128,""own_file"":true,""a01_mean_kBps"":85,""a01_peak_kBps"":730"
+T8,sd_rand_32KiB,reads_per_s,1/s,590.563,567.684,594.67,3,"""file_mb"":128,""own_file"":true,""a01_mean_kBps"":85,""a01_peak_kBps"":730"

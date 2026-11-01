@@ -1,0 +1,4 @@
+test,variant,metric,unit,median,min,max,n,params
+T8,thermal,freq_min_mhz,MHz,1416,1416,1416,1,"""seconds"":600,""threads"":4,""threshold_mhz"":1500"
+T8,thermal,freq_mean_mhz,MHz,1419.17,1419.17,1419.17,1,"""seconds"":600,""threads"":4,""threshold_mhz"":1500"
+T8,thermal,temp_max_c,C,87.623,87.623,87.623,1,"""seconds"":600,""threads"":4,""threshold_mhz"":1500"

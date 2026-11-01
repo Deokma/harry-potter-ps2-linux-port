@@ -1,0 +1,11 @@
+test,variant,metric,unit,median,min,max,n,params
+T8,audio_48k_512,late_callbacks,count,0,0,0,1,"""freq"":48000,""samples"":512,""voices"":48,""load_threads"":4,""seconds"":60,""calls"":5617"
+T8,audio_48k_512,max_gap_ms,ms,15.5564,15.5564,15.5564,1,"""freq"":48000,""samples"":512,""voices"":48,""load_threads"":4,""seconds"":60,""calls"":5617"
+T8,audio_48k_512,period_ms,ms,10.6667,10.6667,10.6667,1,"""freq"":48000,""samples"":512,""voices"":48,""load_threads"":4,""seconds"":60,""calls"":5617"
+T8,audio_48k_512,callback_cost_mean_us,us,628.895,628.895,628.895,1,"""freq"":48000,""samples"":512,""voices"":48,""load_threads"":4,""seconds"":60,""calls"":5617"
+T8,audio_48k_512,callback_cost_max_us,us,3133.96,3133.96,3133.96,1,"""freq"":48000,""samples"":512,""voices"":48,""load_threads"":4,""seconds"":60,""calls"":5617"
+T8,audio_48k_1024,late_callbacks,count,1,1,1,1,"""freq"":48000,""samples"":1024,""voices"":48,""load_threads"":4,""seconds"":60,""calls"":2813"
+T8,audio_48k_1024,max_gap_ms,ms,33.1446,33.1446,33.1446,1,"""freq"":48000,""samples"":1024,""voices"":48,""load_threads"":4,""seconds"":60,""calls"":2813"
+T8,audio_48k_1024,period_ms,ms,21.3333,21.3333,21.3333,1,"""freq"":48000,""samples"":1024,""voices"":48,""load_threads"":4,""seconds"":60,""calls"":2813"
+T8,audio_48k_1024,callback_cost_mean_us,us,1259.2,1259.2,1259.2,1,"""freq"":48000,""samples"":1024,""voices"":48,""load_threads"":4,""seconds"":60,""calls"":2813"
+T8,audio_48k_1024,callback_cost_max_us,us,2887.14,2887.14,2887.14,1,"""freq"":48000,""samples"":1024,""voices"":48,""load_threads"":4,""seconds"":60,""calls"":2813"
