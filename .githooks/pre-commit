@@ -11,8 +11,8 @@ git diff --cached --name-only --diff-filter=ACMR | while IFS= read -r f; do
         echo "pre-commit: blocked '$f' ($size bytes > $max_bytes)" >&2
         exit 1
     fi
-    head4=$(git cat-file blob ":$f" | head -c 4)
-    head8=$(git cat-file blob ":$f" | head -c 8)
+    head4=$(git cat-file blob ":$f" 2>/dev/null | head -c 4)
+    head8=$(git cat-file blob ":$f" 2>/dev/null | head -c 8)
     if [ "$head4" = "$(printf '\177ELF')" ]; then
         echo "pre-commit: blocked '$f' (ELF binary)" >&2
         exit 1
@@ -22,7 +22,7 @@ git diff --cached --name-only --diff-filter=ACMR | while IFS= read -r f; do
         exit 1
     fi
     if [ "$size" -gt 32773 ] && \
-       [ "$(git cat-file blob ":$f" | head -c 32774 | tail -c 5)" = "CD001" ]; then
+       [ "$(git cat-file blob ":$f" 2>/dev/null | head -c 32774 | tail -c 5)" = "CD001" ]; then
         echo "pre-commit: blocked '$f' (ISO9660 image)" >&2
         exit 1
     fi
