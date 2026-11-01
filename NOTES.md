@@ -112,6 +112,8 @@ frozen, capture PAL S03, S05 and S06 (PHASE_1 C7).
 - qemu-user timings are not device timings. Label them.
 - Nothing "runs on the device" until it ran on the device.
 - Stop after each phase and write `docs/PHASE_N.md`.
+- Code generated from the game's ELF (recompiler output) is derived
+  from the game: it goes to `private/` and is never committed.
 
 ## Environment (2026-10-27)
 
