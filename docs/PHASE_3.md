@@ -1,15 +1,17 @@
 # Phase 3: Recompiler evaluation and prototype
 
 **Part A (evaluation) done (2026-11-01). It ends in a decision that is
-yours (brief: ask before choosing the recompiler).** Phase 3 was approved
+yours (brief: ask before choosing the recompiler).** You approved the
+trial it recommends; **Part B step 1 (recompile) is done**, steps 2 and 3
+wait for WSL packages. Phase 3 was approved
 on 2026-11-01 with three conditions (PHASE_1 C8):
 - PAL S03, S05 and S06 captured before the renderer design is frozen;
 - a renderer built to PHASE_2 B5;
 - the prototype confirming T6 / T7 with real translated code.
 
 **Everything in Part A comes from reading the repositories,** on
-2026-11-01, with the last upstream push on 2026-10-23. Nothing has been
-downloaded, built or run yet.
+2026-11-01, with the last upstream push on 2026-10-23. Part B is the
+trial: PS2Recomp downloaded, built and run.
 
 ## A1. What this game needs from a recompiler
 
@@ -194,3 +196,110 @@ GPL-3.0 license comes with that choice.
 **One more rule, in either option.** Generated C/C++ is derived from the
 game's ELF, so it is treated like game data. It goes to `private/` and is
 never committed.
+
+# Part B: the trial
+
+PS2Recomp at commit `e5636981` (2026-10-23), cloned and built in WSL into
+`private/third_party/` (git-ignored). The tools build cleanly with GCC 15.2:
+the clone is 6 MB, the build directory 728 MB with its fetched
+dependencies. Steps: `scripts/ps2recomp_trial.sh`, then
+`scripts/compile_generated.sh`.
+
+## B1. Step 1: recompile
+
+Three runs on SLUS_208.26:
+- **A:** PS2Recomp's analyzer and its own function discovery;
+- **B:** A plus our function map (`scripts/export_function_map.py`,
+  5,465 starts from `analyze_elf.py`);
+- **C:** B plus a one-line change (below).
+
+| | A | B | C |
+|---|---|---|---|
+| Functions | 5,750 | 5,465 | 5,465 |
+| Recompiled + library stubs | 5,624 + 126 | 5,338 + 127 | 5,338 + 127 |
+| Decode failures, unhandled instructions, errors | 0 | 0 | 0 |
+| **Functions with the per-instruction fallback** | 108 (1.9 %) | 102 (1.9 %) | **4 (0.07 %)** |
+| Extra entry points (resume labels) | 60,842 | 60,264 | 44,544 |
+| Time, output | 40 s, 129 MB | 46 s, 128 MB | 45 s, 125 MB |
+
+- **Every function is translated.** No instruction is left to an
+  interpreter. Its analyzer found 4 jump tables, but the recompiler
+  recognizes them itself at the `jr`: 300 of 305 `jr <reg>` sites become a
+  local `switch`.
+- **The fallback** is what PS2Recomp does when it can't resolve an
+  indirect jump: it makes *every* instruction of that function a label the
+  runtime can enter. That's correct, but those functions compile to slow
+  code.
+- **Most of the fallback is a design slip, not missing analysis:** a
+  `jalr` (a call through a function pointer) goes through the same
+  jump-table matcher as a `jr`, and fails it. A call only comes back at
+  `+8`, which already gets a label. Skipping the matcher for `jalr`
+  (run C) leaves 4 functions and 5 `jr` sites. Those are jump tables whose
+  setup the matcher's pattern doesn't cover; our `analyze_elf.py` found
+  them. The change is 13 lines in `control_flow_analyzer.cpp`, behind an
+  environment variable, in `private/third_party/trial/ps2recomp-trial.patch`
+  (with the step 2 test hooks).
+- **A vs B:** both work. Its discovery splits a few hundred more functions
+  than ours; which split is right doesn't matter for correctness, because
+  every internal target gets a label either way.
+- **Against the decision rule** (≥ 95 % of functions recompiled cleanly):
+  **met**, 98.1 % as is, 99.93 % with the change.
+
+**Compile check** (`scripts/compile_generated.sh`, run B output, objects
+only, no link): **x86-64 compiles with no errors**: 5,466 files
+(functions plus the registration table) in 171 batches of 32, GCC 15.2
+`-O2`, 1,049 s wall on 12 WSL threads reading from D:, 63 MB of objects.
+aarch64: waits for the cross C++ compiler.
+
+## B2. What the generated code does (counted in run C's output)
+
+This matters for step 3 more than the counts above:
+- **Registers:** every guest GPR is a 128-bit `__m128i` in the context
+  struct. A 32-bit `addiu` reads and writes it through SSE intrinsics (on
+  ARM, sse2neon). T6 measured a plain `uint64_t` struct; this is heavier.
+- **Each instruction also stores `ctx->pc`**, and each branch stores
+  `in_delay_slot` and `branch_pc`. The compiler can't drop those stores,
+  because guest memory accesses could alias the context.
+- **Each memory access checks for MMIO** before the fast path (a compare
+  and branch).
+- **Calls:** 36,070 `jal` sites call `runtime->dispatchGuestBranch`. That
+  is an out-of-line scheduler checkpoint (three atomic loads and a
+  compare), two lookups in a flat function table (one slot per guest
+  word, cheap), a debug PC-history push and an indirect call. **3,415 loop
+  back-edges** call `eeCheckpointDue` too.
+- **Resumable functions:** every function starts with a `switch (ctx->pc)`
+  over its resume labels, so a thread switch can unwind the host stack and
+  re-enter mid-function. This is how its EE scheduler works; it also means
+  returns after an unwind go through table lookups.
+- 2.6 M lines of C++ in 5,465 files.
+
+None of this is a blocker; all of it is in the emitter and could be changed
+in a fork. How much it costs on the A53 is what step 3 measures.
+
+## B3. Step 2: boot on the PC
+
+**Setup:**
+- PS2Recomp's runtime built in WSL from run B's code (x86-64, its software
+  GS, a raylib window through WSLg), with FFmpeg off: movies show blank
+  frames. GL headers were already installed, so this needed no new
+  packages.
+- **No BIOS image:** the runtime makes up its own `rom0:`.
+- The runtime reads disc files by name from the ELF's folder, so the whole
+  NTSC disc was extracted with our `extract_disc.py --all` (94 files,
+  1.7 GB, in `private/extract/`).
+- raylib 5.5 as a shallow clone (115 MB). PS2Recomp's CMake fetches it
+  with full history, about 500 MB.
+- **Test hooks** in the trial patch, all off unless an environment variable
+  is set: scripted pad presses (`PS2PORT_PAD`, since the game waits at
+  language select), a PNG of the shown frame every 120 presents, and a
+  time limit. No screen control is needed.
+
+**Fixes needed so far:**
+1. The runtime uses SSE4.1 intrinsics, but its CMake sets flags only for
+   MSVC and ARM: GCC on x86-64 needs `-msse4.1`.
+
+## B4. Step 3: what it needs
+
+- The aarch64 C++ cross compiler (`g++-aarch64-linux-gnu`); WSL has only
+  the C one. One `apt` command, which needs your password.
+- The RG40XX H on, with the port-2222 SSH started (NOTES.md).

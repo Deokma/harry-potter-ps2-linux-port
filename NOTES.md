@@ -21,6 +21,14 @@ Phase reports live in `docs/PHASE_N.md`.
   the user's decision (brief: ask before big decisions). Before the
   renderer design is frozen, PAL S03, S05 and S06 must be captured
   (routine below).
+- **PS2Recomp trial (PHASE_3 Part B), user-approved 2026-11-01:**
+  - Step 1 (recompile) done: every function translated; 98.1 % without
+    the per-instruction fallback, 99.93 % with the `jalr` change.
+  - Steps 2 (PC boot) and 3 (device speed) wait for the user to install
+    FFmpeg / GL dev packages and `g++-aarch64-linux-gnu` in WSL.
+  - PS2Recomp lives in `private/third_party/PS2Recomp` (commit
+    `e5636981`, with the trial patch applied); its output in
+    `private/third_party/trial/` (derived from the game, never committed).
 
 **Device access (RG40XX H, 192.168.0.165, Knulli):**
 - Settings live in `.env` (git-ignored; template `.env.example`): host,
@@ -266,6 +274,12 @@ frozen, capture PAL S03, S05 and S06 (PHASE_1 C7).
   `/CUT/*.HOG` cutscene archive, which looks like one stereo ADPCM stream.
   The mean is 85 kB/s, with bursts of about 0.7 MB/s at scene changes
   (PHASE_1 B2h).
+- PS2Recomp (commit `e5636981`):
+  - its runtime needs no BIOS image: `PS2RomDevice` makes up `rom0:`
+    with only a `ROMVER` file;
+  - its fallback warning lists every indirect jump of a function, not
+    only the unresolved ones, and its report counts each fallback function
+    twice. Count unique function names in the log instead.
 
 ## Commands that worked
 
@@ -311,4 +325,11 @@ BENCH_HOST=root@<ip> BENCH_QUICK=1 BENCH_PRE='...' BENCH_POST='...' scripts/run_
 BENCH_HOST=root@<ip> BENCH_GOVERNOR=performance BENCH_PRE='...' BENCH_POST='...' scripts/run_remote.sh
 # From Git Bash, call WSL with path conversion off:
 #   MSYS_NO_PATHCONV=1 wsl -e bash -c 'cd /mnt/d/Projects/anbernic/PS2Recompiler && scripts/build_bench.sh'
+
+# Phase 3 trial (in WSL, from the repo root; all output under private/third_party/)
+python3 scripts/export_function_map.py ELF private/third_party/trial/function_map.csv
+scripts/ps2recomp_trial.sh all          # clone + build tools, analyzer, runs A and B
+scripts/ps2recomp_trial.sh c            # run C: needs trial/ps2recomp-trial.patch applied
+scripts/compile_generated.sh private/third_party/trial/out-b \
+    private/third_party/trial/obj-x86 g++ -msse4.1   # x86-64 compile check, ~25 min
 ```
