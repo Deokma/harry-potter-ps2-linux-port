@@ -12,7 +12,7 @@
 - Renderer rules for Phase 3 are in B5.
 - No line misses by more than 2× without a passing alternative, so
   PHASE_1 Part C gets an update (C8) rather than reopening.
-- **Phase 2 is complete and waiting for your review.**
+- **Phase 2 is complete.** Reviewed; Phase 3 approved on 2026-11-01.
 
 **Part A contains no device measurements.** Its qemu and desktop runs show
 only that the code paths work and give correct results; their timings

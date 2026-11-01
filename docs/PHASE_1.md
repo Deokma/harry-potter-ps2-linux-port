@@ -5,8 +5,8 @@ Status: **Part A (static analysis) done. Part B (measurements) approved
 (B2a); all NTSC scenes measured (B2b–B2h: N01–N03, I01, F01, A01); the PAL
 scenes S01–S08 are deferred (user decision). Part C: conditional go,
 written from the NTSC data only (2026-10-27). C8 (2026-11-01): every
-condition met on the device; recommended upgrade to go for Phase 3,
-pending review.**
+condition met on the device. **Verdict upgraded to go for Phase 3,
+approved by the user on 2026-11-01**, with the three conditions in C8.**
 Primary disc: NTSC-U SLUS-20826. Secondary: PAL SLES-52055. The boot ELF is
 the same file on both.
 
@@ -973,7 +973,7 @@ written on 2026-10-27.
   (−6 %), which C8 already budgets.
 - #3 (PAL scenes) is unchanged and is now the largest single uncertainty.
 
-**Recommended verdict (pending your review): go for Phase 3**, with three
+**Verdict: go for Phase 3** (approved by the user, 2026-11-01), with three
 conditions:
 1. PAL S03, S05 and S06 before the renderer design is frozen.
 2. A renderer built to PHASE_2 B5.

@@ -15,9 +15,12 @@ Phase reports live in `docs/PHASE_N.md`.
   - Part A: the bench suite.
   - Part B: the device run on the **RG40XX H** (Knulli), with results
     against the thresholds, two driver traps and the renderer rules (B5).
-- **Stopped for the user's review.** Phase 3 starts only when the user
-  says go. Before the renderer design is frozen, PAL S03, S05 and S06
-  must be captured (routine below).
+- **Phase 3 approved by the user on 2026-11-01** (go, with the three
+  conditions in PHASE_1 C8). Step 1, comparing an existing recompiler with
+  a minimal one, is `docs/PHASE_3.md` Part A. The choice of recompiler is
+  the user's decision (brief: ask before big decisions). Before the
+  renderer design is frozen, PAL S03, S05 and S06 must be captured
+  (routine below).
 
 **Device access (RG40XX H, 192.168.0.165, Knulli):**
 - Settings live in `.env` (git-ignored; template `.env.example`): host,
