@@ -10,8 +10,10 @@
 #   BENCH_GOVERNOR=performance, BENCH_THERMAL_S=600, BENCH_QUICK=1,
 #   BENCH_SD_FILE=path   passed through to run_day1.sh
 # Needs SSH key login (BatchMode: this never prompts for a password).
+# Settings can also come from ./.env (see .env.example).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. scripts/env.sh
 : "${BENCH_HOST:?set BENCH_HOST=user@device}"
 dir="${BENCH_DIR:-ps2bench}"
 ssh_opts=(-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30 ${BENCH_SSH_OPTS:-})

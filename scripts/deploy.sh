@@ -2,9 +2,11 @@
 # Copy the aarch64 bench binaries and run_day1.sh to the device over SSH.
 #   BENCH_HOST=root@192.168.1.50 scripts/deploy.sh
 # Needs SSH key login (BatchMode: this never prompts for a password).
+# Settings can also come from ./.env (see .env.example).
 # BENCH_DIR on the device defaults to ps2bench (in the login's home).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+. scripts/env.sh
 : "${BENCH_HOST:?set BENCH_HOST=user@device}"
 dir="${BENCH_DIR:-ps2bench}"
 ssh_opts=(-o BatchMode=yes -o ConnectTimeout=10 ${BENCH_SSH_OPTS:-})
