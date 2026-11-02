@@ -653,3 +653,58 @@ The small trial calls (B4) reached 293 M/s at the same clock; gameplay code
 costs about 21 A53 cycles per guest instruction against about 5 there.
 **By plan adjustment 3 this is a stop:** no full generator until the cost is
 understood and you choose how to go on.
+
+## C3. Why the frame is slow, and the options (stop under condition 3)
+
+**Where the 176.6 M cycles of a frame go** (A53 PMU, 1.416 GHz):
+
+| | Cycles per frame | Share |
+|---|---|---|
+| Stalled on instruction fetch (i-cache misses, event 0xE1) | 60.1 M | **34 %** |
+| Stalled on load misses (0xE7; 290 k L2 refills, 181 k L1D refills) | 17.3 M | 10 % |
+| Store stalls (0xE8) | 0.7 M | 0.4 % |
+| Executing 103.8 M host instructions (12.2 per guest instruction) | ~99 M | **56 %** |
+
+**Guest instruction mix** of the frame (counting build, all 8.54 M):
+FPU 43.6 %, integer ALU 23.8 %, loads/stores 12.3 %, branches 10.4 %,
+128-bit `lq`/`sq` 6.8 %, nop 2.4 %, multiply/divide 0.4 %, VU0 macro 0.1 %.
+The vector work happens in VU0 microprograms (1,116 per frame), which the
+stand-in skips.
+
+**What the budget needs:** 33.3 ms at 30 frames/s is 47 M cycles, so about
+**5.5 A53 cycles per guest instruction**, with nothing else on that core. The
+frame now takes 20.7. For reference, T6's integer code ran at 4.6 cycles per
+guest instruction with registers in a struct and 3.2 with registers in host
+registers; the PS2 itself runs this frame in about 5–6 M EE cycles.
+
+**Options, with what the measurements say about each:**
+1. **Native FPU** (43.6 % of instructions): FPU registers in host FP
+   registers within a block, and the A53's flush-to-zero mode (FPCR.FZ) for
+   the PS2's lack of denormals, instead of a check and a context load / store
+   per operation. The game needs no FPU clamping fix in PCSX2's GameIndex, so
+   overflow clamping can stay out of the hot path.
+2. **Host register allocation for GPRs within blocks / functions:** T6
+   measured 327 → 470 M/s for this alone (−30 % instructions).
+3. **Direct calls:** no function-table lookups (148 k per frame through a
+   32 MB table, a likely source of the L2 refills and load stalls).
+4. **Code size and layout for the A53 i-cache** (34 % of cycles): items 1–3
+   shrink code roughly with the instruction count; slow paths (MMIO, FPU
+   specials) out of line; functions ordered by the frame's call profile (the
+   replay records it) so the hot set is contiguous; profile-guided
+   optimization with the replay as training run.
+5. **VU0 microprograms** (1,116 per frame, not yet costed): compile the
+   resident VU0 programs to native NEON code, as planned for VU1.
+6. **If the generator still falls short:** a 20 frames/s target (the game
+   already drops to 20 in places; 50 ms per frame is 8.3 cycles per guest
+   instruction), and moving interrupt callbacks, other threads and VU0
+   programs to the other three cores (the main frame itself is sequential).
+
+**Estimate, to be proven:** items 1–4 together could bring execution to
+roughly 30–35 M cycles and the stalls to about 15–20 M, so about 35–40 ms
+per frame for the main frame alone. That's **marginal for 30 frames/s and
+comfortable for 20**, before the work the replay leaves out (C1), the IOP
+interpreter, and VU0 programs are added.
+
+**Not done yet** (deferred by the stop): the cost model for interrupts,
+threads and IOP callbacks (adjustment 1; the vblank handler's replay state is
+built), the PCSX2 one-frame diff (adjustment 2), the IOP interpreter's share.
