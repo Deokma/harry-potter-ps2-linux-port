@@ -2,8 +2,10 @@
 
 **Part A (evaluation) done (2026-11-01). It ends in a decision that is
 yours (brief: ask before choosing the recompiler).** You approved the
-trial it recommends; **Part B step 1 (recompile) is done**, steps 2 and 3
-wait for WSL packages. Phase 3 was approved
+trial it recommends. In Part B, **step 1 (recompile) passes**. **Step 2
+(PC boot) reaches the IOP modules and the first disc reads, then stops
+at a missing runtime feature (IOP→EE RPC, B3)**. Step 3 (device speed)
+needs the aarch64 C++ compiler and the device's SSH. Phase 3 was approved
 on 2026-11-01 with three conditions (PHASE_1 C8):
 - PAL S03, S05 and S06 captured before the renderer design is frozen;
 - a renderer built to PHASE_2 B5;
@@ -271,6 +273,11 @@ This matters for step 3 more than the counts above:
   over its resume labels, so a thread switch can unwind the host stack and
   re-enter mid-function. This is how its EE scheduler works; it also means
   returns after an unwind go through table lookups.
+- **Thread switches throw a C++ exception** (`EeDispatcherTransfer`) to
+  unwind the host stack: every blocking wait (semaphore, sleep, vsync)
+  pays an exception unwind through the guest call depth. That's cheap
+  if the game blocks a few hundred times a second, not if it blocks tens
+  of thousands of times.
 - 2.6 M lines of C++ in 5,465 files.
 
 None of this is a blocker; all of it is in the emitter and could be changed
@@ -294,12 +301,85 @@ in a fork. How much it costs on the A53 is what step 3 measures.
   language select), a PNG of the shown frame every 120 presents, and a
   time limit. No screen control is needed.
 
+**Build:** 2,534 s in WSL over `/mnt/d` (5 min copying the generated
+files, 30 s configure, the generated code in 171 unity batches with a
+precompiled header, then an LTO link of about 8 min). Binary 73 MB, build
+directory 574 MB.
+
+**Boot 1 (no fixes beyond the build flag):** the window opens, the ELF
+loads, guest code runs at 60 presents/s, but no frame ever comes from the
+GS (the runtime's magenta placeholder). The game spins in its heap setup:
+- crt0 calls `SetupThread(stack = -1, size = 64 KB)` and
+  `SetupHeap(end of BSS, -1)`;
+- the game then asks for its whole heap, up to RAM end minus 72 KB
+  (0x01FEE000), and retries forever if that fails;
+- PS2Recomp's `EndOfHeap` answers 0x01F00000, because the runtime keeps
+  the top megabyte of guest RAM for itself (RPC and thread-local pools,
+  callback stacks). So `sbrk` fails and the game never gets past it.
+
 **Fixes needed so far:**
-1. The runtime uses SSE4.1 intrinsics, but its CMake sets flags only for
-   MSVC and ARM: GCC on x86-64 needs `-msse4.1`.
+1. **Build:** the runtime uses SSE4.1 intrinsics, but its CMake sets flags
+   only for MSVC and ARM. GCC on x86-64 needs `-msse4.1`.
+2. **Guest memory layout (runtime):**
+   - the runtime's pools and callback stacks move to free EE-kernel RAM
+     (0x20000–0x6FFFF and 0xA0000–0xFFFFF; the game's kernel patches sit
+     at 0x70000–0x7FFFF, PHASE_1 A8);
+   - `SetupThread(-1)` returned the stack region's *bottom* as SP, so the
+     stack grew down into the heap. It now starts near the top;
+   - `SetupHeap(-1)` ends the heap at the main stack's base, as the real
+     kernel does;
+   - the runtime's own `guestMalloc` (used by stubs such as
+     `sceGsResetGraph`) shared the region the game manages with its own
+     `sbrk`. It gets its own region in kernel RAM.
+
+   About 40 lines in three files. It's a design assumption in the runtime
+   (that the top megabyte is free), so other games may hit it too.
+
+**Boot 2 (with fix 2), 120 s, no input:**
+- Heap setup passes. **All 7 IOP modules load and start on PS2Recomp's
+  IOP interpreter**, with no HLE fallback and no missing import: SIO2MAN,
+  PADMAN, MCMAN, MCSERV, LIBSD, SDRDRV and the custom `STREAM.IRX`.
+- `STREAM.IRX` finds the disc and caches its directory (94 files), as on
+  a PS2.
+- Then the EE stops for good, about 4 s in, still before any frame (every
+  dump is the magenta placeholder). The game's file layer has queued a
+  read for `STREAM.IRX`, stored its thread ID with the request and called
+  `SleepThread`; it waits for a wake-up that never comes.
+
+**Stop 3: IOP→EE RPC is missing.**
+- This game registers an RPC server *on the EE* (sid `0x12344321`).
+  `STREAM.IRX` imports `sceSifBindRpc` and `sceSifCallRpc` (sifcmd 15 and
+  16, PHASE_1 A7 import table) to call it, which is how it reports
+  finished reads.
+- In PS2Recomp the IOP side of those two calls returns 0 and does nothing,
+  and the EE side of `sceSifRpcLoop` is a stub that returns at once. So an
+  IOP module can't call an EE server, and the wake-up never happens.
+- The runtime already runs guest code on the EE for commands the IOP sends
+  (`sceSifSendCmd` → a `GuestInvocation`), so IOP→EE RPC can be built the
+  same way: bind fills the client from the EE server table, call copies
+  the arguments into the server's buffer, runs the server function as an
+  invocation, copies the reply back and wakes the IOP caller. That's a
+  missing feature of maybe 150–300 lines in the IOP emulator and the
+  runtime, not a small fix.
+
+**Where step 2 stands:** three stops so far, two fixed (a build flag, a
+guest-memory layout change), the third understood but not implemented.
+Not yet near the title screen: the language-select screen comes after the
+first file reads.
 
 ## B4. Step 3: what it needs
 
 - The aarch64 C++ cross compiler (`g++-aarch64-linux-gnu`); WSL has only
   the C one. One `apt` command, which needs your password.
-- The RG40XX H on, with the port-2222 SSH started (NOTES.md).
+- The RG40XX H on, with the port-2222 SSH started (NOTES.md). Its address
+  is 192.168.1.4 since 2026-11-01.
+- **Input to replay.** The trial patch can now record one guest call on the
+  PC (`PS2PORT_SNAP_PC`: registers, RAM and scratchpad before and after,
+  and every function it reached). The device harness would run that call
+  from the generated code with a stand-in runtime of the same cost (the
+  generated code calls only about a dozen runtime functions), with a
+  counting build for exact guest instruction counts.
+- **Catch:** the PC boot doesn't reach gameplay, so the only calls to
+  record are boot code. Gameplay RAM is in the Phase 1 PCSX2 savestates;
+  replaying a per-frame function from one of those is possible, but the
+  savestate stops a thread mid-frame, so it needs care.

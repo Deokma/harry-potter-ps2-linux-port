@@ -30,12 +30,12 @@ Phase reports live in `docs/PHASE_N.md`.
     `e5636981`, with the trial patch applied); its output in
     `private/third_party/trial/` (derived from the game, never committed).
 
-**Device access (RG40XX H, 192.168.0.165, Knulli):**
+**Device access (RG40XX H, 192.168.1.4 since 2026-11-01 (was 192.168.0.165), Knulli):**
 - Settings live in `.env` (git-ignored; template `.env.example`): host,
   port 2222, key, `BENCH_DIR`, frontend stop / start, `XDG_RUNTIME_DIR`.
 - **After every device reboot** the user runs, in PowerShell, typing the
   device password:
-  `cmd /c "ssh root@192.168.0.165 sh -s < D:\Projects\anbernic\PS2Recompiler\scripts\device_ssh_setup.sh"`.
+  `cmd /c "ssh root@192.168.1.4 sh -s < D:\Projects\anbernic\PS2Recompiler\scripts\device_ssh_setup.sh"`.
   That starts the key-login SSH on port 2222. Claude never types
   passwords.
 - Run the scripts from Git Bash: `bash scripts/deploy.sh`,
@@ -280,6 +280,13 @@ frozen, capture PAL S03, S05 and S06 (PHASE_1 C7).
   - its fallback warning lists every indirect jump of a function, not
     only the unresolved ones, and its report counts each fallback function
     twice. Count unique function names in the log instead.
+  - building its runtime with GCC on x86-64 needs `-msse4.1` (its CMake
+    sets flags only for MSVC and ARM). raylib is fetched with full history
+    (~500 MB); `FETCHCONTENT_SOURCE_DIR_RAYLIB` with a shallow 5.5 clone
+    avoids that. Copying the 5k generated files over `/mnt/d` takes ~5 min.
+  - its IOP side stores SPU2 registers but emulates no SPU2: sound modules
+    run, nothing plays.
+  - WSL has `perf` (`/usr/lib/linux-tools/.../perf`) for profiling.
 
 ## Commands that worked
 
