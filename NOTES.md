@@ -24,11 +24,17 @@ Phase reports live in `docs/PHASE_N.md`.
 - **PS2Recomp trial (PHASE_3 Part B), user-approved 2026-11-01:**
   - Step 1 (recompile) done: every function translated; 98.1 % without
     the per-instruction fallback, 99.93 % with the `jalr` change.
-  - Steps 2 (PC boot) and 3 (device speed) wait for the user to install
-    FFmpeg / GL dev packages and `g++-aarch64-linux-gnu` in WSL.
+  - Step 2 (PC boot, 2026-11-02): with two fixes, all 7 IOP modules load
+    and the disc directory is cached; then the game sleeps forever because
+    PS2Recomp has no IOP→EE RPC (PHASE_3 B3). Waiting on the user: build
+    that feature in the trial copy, or stop step 2 here.
+  - Step 3 (device speed) needs `g++-aarch64-linux-gnu` in WSL (user's
+    apt step) and the port-2222 SSH restarted on the device's new address.
   - PS2Recomp lives in `private/third_party/PS2Recomp` (commit
-    `e5636981`, with the trial patch applied); its output in
-    `private/third_party/trial/` (derived from the game, never committed).
+    `e5636981`; all trial changes in
+    `private/third_party/trial/ps2recomp-trial.patch`); its output and
+    boot runs in `private/third_party/trial/` (derived from the game,
+    never committed).
 
 **Device access (RG40XX H, 192.168.1.4 since 2026-11-01 (was 192.168.0.165), Knulli):**
 - Settings live in `.env` (git-ignored; template `.env.example`): host,
