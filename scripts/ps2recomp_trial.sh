@@ -67,13 +67,11 @@ runtime() {
     # clone of the same tag is enough
     [ -d "$tp/raylib-5.5" ] || git clone --depth 1 --branch 5.5 \
         https://github.com/raysan5/raylib.git "$tp/raylib-5.5"
-    # copying 5k files over /mnt/d takes minutes; skip it when unchanged
-    if [ "$(cat "$rt/src/runner/.ps2port-out" 2>/dev/null)" != "$1" ]; then
-        find "$rt/src/runner" -name '*.cpp' -delete
-        cp "$trial/out-$1"/*.cpp "$rt/src/runner/"
-        cp "$trial/out-$1"/*.h "$rt/include/"
-        echo "$1" > "$rt/src/runner/.ps2port-out"
-    fi
+    # sync by checksum: only changed files get new times, so ninja rebuilds
+    # only the unity batches that hold them
+    rsync -rc --delete --include='*.cpp' --exclude='*' \
+        "$trial/out-$1/" "$rt/src/runner/"
+    rsync -c "$trial/out-$1"/*.h "$rt/include/"
     # the runtime uses SSE4.1 intrinsics; its CMake only sets flags for
     # MSVC and ARM, so GCC on x86-64 needs -msse4.1
     cmake -S "$tp/PS2Recomp" -B "$tp/build-runtime" -G Ninja \
@@ -99,8 +97,13 @@ boot() {
     mkdir -p "$dir/frames"
     echo "secs=$1 pad=${2:-}" > "$dir/run.txt"
     start=$(date +%s)
+    # PERF=1: sample the run with perf (cpu-clock) into perf.data
+    prof=""
+    if [ "${PERF:-0}" = 1 ]; then
+        prof="$(ls /usr/lib/linux-tools/*/perf | head -1) record -e cpu-clock -F 499 -o $dir/perf.data --"
+    fi
     PS2PORT_RUN_SECONDS=$1 PS2PORT_PAD=${2:-} PS2PORT_FRAME_DIR=$dir/frames \
-        timeout -k 10 $(($1 + 30)) \
+        timeout -k 10 $(($1 + 30)) $prof \
         "$tp/build-runtime/ps2xRuntime/ps2EntryRunner" "$elf" > "$dir/log.txt" 2>&1 \
         && rc=0 || rc=$?
     echo "exit $rc after $(($(date +%s) - start)) s, $(ls "$dir/frames" | wc -l) frames, log $(wc -l < "$dir/log.txt") lines: $dir"

@@ -406,9 +406,17 @@ def analyze_code(elf, data):
             if in_code(v):
                 data_ptrs.append((s["addr"] + i, v))
 
+    def after_return(a):
+        # the last non-nop words before `a` are `jr ra` + delay slot; nop
+        # padding between functions is skipped (the delay slot may be a nop
+        # too, hence both checks)
+        q, pad = a - 4, 0
+        while words.get(q) == 0 and pad < 8:
+            q, pad = q - 4, pad + 1
+        return words.get(q) == JR_RA or words.get(q - 4) == JR_RA
+
     def looks_like_entry(a):
-        return (a in jal_targets or a in prologues or
-                words.get(a - 8) == JR_RA)
+        return a in jal_targets or a in prologues or after_return(a)
 
     ptr_targets = {t for _, t in data_ptrs}
     fn_ptr_targets = {t for t in ptr_targets | lui_code_refs
