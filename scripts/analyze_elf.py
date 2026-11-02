@@ -425,6 +425,7 @@ def analyze_code(elf, data):
 
     # jump tables: runs of >= 3 consecutive data words that point at labels
     tables, run = [], []
+    table_targets = set()
     for a, t in data_ptrs + [(None, None)]:
         if t is not None and t in label_targets and \
                 (not run or a == run[-1][0] + 4):
@@ -432,15 +433,31 @@ def analyze_code(elf, data):
             continue
         if len(run) >= 3:
             tables.append({"addr": run[0][0], "entries": len(run)})
+            table_targets.update(t for _, t in run)
         run = [(a, t)] if t is not None and t in label_targets else []
 
     jal_in_code = {t for t in jal_targets if in_code(t)}
     starts_low = jal_in_code | fn_ptr_targets
     starts_mid = starts_low | prologues
     # conservative boundaries for a function map: a prologue only counts as
-    # a start right after a return (`jr ra` + delay slot), never mid-body
-    starts_map = starts_low | {p for p in prologues
-                               if words.get(p - 8) == JR_RA}
+    # a start right after a return (`jr ra` + delay slot, then any nop
+    # padding), never mid-body
+    starts_map = starts_low | {p for p in prologues if after_return(p)}
+
+    # thunks reached through pointers that sit after a tail jump (`j` +
+    # delay slot, e.g. `lui a1, ..; j f; addiu a1, ..`): a jump within their
+    # first three instructions, and not a jump-table entry
+    def after_tail_jump(a):
+        q, pad = a - 4, 0
+        while words.get(q) == 0 and pad < 8:
+            q, pad = q - 4, pad + 1
+        return any((words.get(x, 0) >> 26) == 2 for x in (q, q - 4))
+
+    def is_thunk(a):
+        return any((words.get(a + 4 * k, 0) >> 26) == 2 for k in range(3))
+
+    starts_map |= {t for t in label_targets - table_targets
+                   if after_tail_jump(t) and is_thunk(t)}
     if in_code(elf["entry"]):
         starts_map.add(elf["entry"])
     code_bytes = sum(hi - lo for lo, hi in ranges)
