@@ -538,3 +538,36 @@ PS2Recomp's value is: its runtime got the game from the ELF entry to the
 main loop, through the IOP modules (including the custom `STREAM.IRX`), the
 kernel and SIF, with five fixes. Its code generation is what doesn't fit
 the A53.
+
+# Part C: milestone 1, a gameplay frame through our code generator
+
+**Decision (you, 2026-11-02):** the hybrid route. Fork PS2Recomp's
+runtime, write our own code generator; the port is GPL-3.0. Conditions in
+NOTES D3.4. This milestone comes before any other Phase 3 work.
+
+**The frame.** In both gameplay savestates (NTSC slots 2 and 3, in
+Ollivanders) the main thread's stack shows the live call chain:
+crt0 → `main` (`0x26E438`) → **`0x2635D0`, called once per frame** →
+`0x251610` (the gameplay frame) → `0x2C5F70` → `0x2CE2C8` (end of frame) →
+the vsync wait, where the main thread sits. So one call of `0x2635D0`
+from `main`, started on the savestate's RAM, is one gameplay frame.
+
+**Plan:**
+1. **Replay state from the savestates:** RAM, scratchpad, FPU control,
+   VU0 registers and memory from the `.p2s`; the call's registers
+   rebuilt from `main`'s call site (the savestate's own CPU registers
+   belong to the PS2 kernel's idle code).
+2. **Reference run on the PC:** the same frame through PS2Recomp's
+   generated code, in the replay harness with a deterministic "idle
+   hardware" stand-in (DMA idle, no interrupts, the vsync wait returns at
+   once). Both generators run against the same stand-in, so the comparison
+   is byte-for-byte.
+3. **Our code generator,** designed from the trial's measurements (B4):
+   plain 64-bit registers, direct RAM access with a cheap MMIO path, a
+   local countdown instead of a scheduler call per loop pass, direct
+   calls. Differential tests against the reference until the frame
+   matches byte for byte.
+4. **On the device at the 1.416 GHz budget clock** (`scaling_max_freq`
+   pinned): instr/s, and A53 PMU counters for the instruction cache.
+5. **IOP interpreter share,** and whether `STREAM.IRX` needs native HLE.
+6. Report; stop if the frame misses the budget (condition 3).

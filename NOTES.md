@@ -21,8 +21,8 @@ Phase reports live in `docs/PHASE_N.md`.
   the user's decision (brief: ask before big decisions). Before the
   renderer design is frozen, PAL S03, S05 and S06 must be captured
   (routine below).
-- **PS2Recomp trial (PHASE_3 Part B) done 2026-11-02; waiting on the
-  user's choice of recompiler (PHASE_3 B5).**
+- **PS2Recomp trial (PHASE_3 Part B) done 2026-11-02. User chose the
+  hybrid route (D3.4); milestone 1 (PHASE_3 Part C) in progress.**
   - Step 1: every function translates; 98.1 % without the fallback.
   - Step 2: the PC boot reaches the game's main loop after 5 fixes (build
     flag, guest memory layout, IOP→EE RPC ~230 lines, our function map,
@@ -215,6 +215,24 @@ frozen, capture PAL S03, S05 and S06 (PHASE_1 C7).
 - **D3.3 Step 3 figures are taken at the `performance` governor
   (1.512 GHz) and scaled to 1.416 GHz** for the bar, as in Phase 2; the
   governor is restored after each run.
+
+- **D3.4 Recompiler route (user decision, 2026-11-02): hybrid.** Fork
+  PS2Recomp's runtime, write our own code generator. **The port is
+  GPL-3.0.** Conditions:
+  1. First milestone, before any other Phase 3 work: a real gameplay
+     frame's main update runs on the device through the new generator,
+     state from the PCSX2 savestates (NTSC slots 2–3 first, then PAL S03,
+     S05, S06 once captured), verified byte-for-byte against PCSX2 or the
+     PC run, measured at the 1.416 GHz budget clock.
+  2. Report instr/s, instruction-cache behaviour and the IOP interpreter's
+     share of time (STREAM.IRX etc.); say whether native HLE of STREAM.IRX
+     is needed.
+  3. If the frame misses the budget even with the optimized generator,
+     stop and list concrete further options before building anything
+     else.
+  4. PS2Recomp sources, the patch, generated code and recordings stay in
+     `private/`. Document which parts of our code derive from PS2Recomp
+     (`docs/PROVENANCE.md`).
 
 ## Open questions
 
