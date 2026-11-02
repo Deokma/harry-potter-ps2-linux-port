@@ -21,21 +21,24 @@ Phase reports live in `docs/PHASE_N.md`.
   the user's decision (brief: ask before big decisions). Before the
   renderer design is frozen, PAL S03, S05 and S06 must be captured
   (routine below).
-- **PS2Recomp trial (PHASE_3 Part B), user-approved 2026-11-01:**
-  - Step 1 (recompile) done: every function translated; 98.1 % without
-    the per-instruction fallback, 99.93 % with the `jalr` change.
-  - Step 2 (PC boot, 2026-11-02): with two fixes, all 7 IOP modules load
-    and the disc directory is cached; then the game sleeps forever because
-    PS2Recomp has no IOP→EE RPC (PHASE_3 B3). Waiting on the user: build
-    that feature in the trial copy, or stop step 2 here.
-  - Step 3 (device speed): prerequisites met on 2026-11-02 (the
-    `aarch64-linux-gnu-g++` 15.2 cross compiler in WSL; key-login SSH on
-    192.168.1.4:2222). Not started.
+- **PS2Recomp trial (PHASE_3 Part B) done 2026-11-02; waiting on the
+  user's choice of recompiler (PHASE_3 B5).**
+  - Step 1: every function translates; 98.1 % without the fallback.
+  - Step 2: the PC boot reaches the game's main loop after 5 fixes (build
+    flag, guest memory layout, IOP→EE RPC ~230 lines, our function map,
+    `PollSema`). Frames are black: VU1 runs code that never arrived
+    (stop 6, open).
+  - Step 3 on the device: PS2Recomp's code as is ~63 M guest instr/s at
+    1.416 GHz (bar 295); with code generation reworked (scalar registers,
+    direct RAM access, no per-loop scheduler call, lean calls) ~290 M/s on
+    loop code, ~200 M/s on straight-line code. By the rule: option B.
   - PS2Recomp lives in `private/third_party/PS2Recomp` (commit
     `e5636981`; all trial changes in
-    `private/third_party/trial/ps2recomp-trial.patch`); its output and
-    boot runs in `private/third_party/trial/` (derived from the game,
-    never committed).
+    `private/third_party/trial/ps2recomp-trial.patch`); its output, boot
+    runs, recordings (`trial/rec/`) and the device harness
+    (`trial/harness/`) in `private/third_party/trial/` (derived from the
+    game, never committed). The harness and recordings are also on the
+    device in `/userdata/ps2bench/harness/`.
 
 **Device access (RG40XX H, 192.168.1.4 since 2026-11-01 (was 192.168.0.165), Knulli):**
 - Settings live in `.env` (git-ignored; template `.env.example`): host,
@@ -203,6 +206,16 @@ frozen, capture PAL S03, S05 and S06 (PHASE_1 C7).
   - T6 gets exact guest counts from a counting build.
   - Device access is SSH key only.
 
+- **D3.1 Trial changes to PS2Recomp stay in a private patch**
+  (`private/third_party/trial/ps2recomp-trial.patch`), not in the repo:
+  PS2Recomp is GPL-3.0 and the recompiler choice is still open.
+- **D3.2 The device harness is private too** (it builds against PS2Recomp's
+  headers and game-derived code). Game RAM recordings for it live in
+  `private/third_party/trial/rec/` and, for runs, on the user's own device.
+- **D3.3 Step 3 figures are taken at the `performance` governor
+  (1.512 GHz) and scaled to 1.416 GHz** for the bar, as in Phase 2; the
+  governor is restored after each run.
+
 ## Open questions
 
 - Q0.3 BIOS: the user placed the bundle's SCPH-50004 (EUR v1.90) files in
@@ -349,4 +362,14 @@ scripts/ps2recomp_trial.sh all          # clone + build tools, analyzer, runs A 
 scripts/ps2recomp_trial.sh c            # run C: needs trial/ps2recomp-trial.patch applied
 scripts/compile_generated.sh private/third_party/trial/out-b \
     private/third_party/trial/obj-x86 g++ -msse4.1   # x86-64 compile check, ~25 min
+scripts/ps2recomp_trial.sh runtime b    # build the runner from run B (needs the trial patch)
+scripts/ps2recomp_trial.sh boot 180 "CROSS@20+0.3/5"   # boot in a WSLg window, frames + log
+PERF=1 scripts/ps2recomp_trial.sh boot 60            # same, sampled with perf
+# record one guest call for the device harness (.in/.out/.targets)
+PS2PORT_SNAP_PC=0xADDR PS2PORT_SNAP_NTH=1 PS2PORT_SNAP_FILE=/abs/path/rec \
+    scripts/ps2recomp_trial.sh boot 60
+# harness (private/third_party/trial/harness): sources for that recording, then build
+python3 -I private/third_party/trial/harness/make_harness.py REC private/third_party/trial/out-b \
+    private/third_party/trial/harness
+sh private/third_party/trial/harness/build.sh aarch64 time    # or x86, count
 ```

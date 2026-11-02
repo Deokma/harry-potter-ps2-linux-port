@@ -97,15 +97,22 @@ boot() {
     mkdir -p "$dir/frames"
     echo "secs=$1 pad=${2:-}" > "$dir/run.txt"
     start=$(date +%s)
-    # PERF=1: sample the run with perf (cpu-clock) into perf.data
+    # PERF=1: sample the run with perf (cpu-clock) and write a symbol report.
+    # perf can't write its data file onto /mnt/d, so it goes to /tmp first.
+    perf=$(ls /usr/lib/linux-tools/*/bin/perf 2>/dev/null | head -1)
     prof=""
     if [ "${PERF:-0}" = 1 ]; then
-        prof="$(ls /usr/lib/linux-tools/*/perf | head -1) record -e cpu-clock -F 499 -o $dir/perf.data --"
+        prof="$perf record -e cpu-clock -F 499 -o /tmp/ps2port-perf.data --"
     fi
     PS2PORT_RUN_SECONDS=$1 PS2PORT_PAD=${2:-} PS2PORT_FRAME_DIR=$dir/frames \
         timeout -k 10 $(($1 + 30)) $prof \
         "$tp/build-runtime/ps2xRuntime/ps2EntryRunner" "$elf" > "$dir/log.txt" 2>&1 \
         && rc=0 || rc=$?
+    if [ -n "$prof" ]; then
+        "$perf" report -i /tmp/ps2port-perf.data --stdio --sort symbol \
+            > "$dir/perf_report.txt" 2>/dev/null || true
+        mv /tmp/ps2port-perf.data "$dir/perf.data"
+    fi
     echo "exit $rc after $(($(date +%s) - start)) s, $(ls "$dir/frames" | wc -l) frames, log $(wc -l < "$dir/log.txt") lines: $dir"
 }
 

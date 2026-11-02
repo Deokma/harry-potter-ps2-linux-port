@@ -2,10 +2,16 @@
 
 **Part A (evaluation) done (2026-11-01). It ends in a decision that is
 yours (brief: ask before choosing the recompiler).** You approved the
-trial it recommends. In Part B, **step 1 (recompile) passes**. **Step 2
-(PC boot) reaches the IOP modules and the first disc reads, then stops
-at a missing runtime feature (IOP→EE RPC, B3)**. Step 3 (device speed)
-needs the aarch64 C++ compiler and the device's SSH. Phase 3 was approved
+trial it recommends; **Part B (the trial) is done (2026-11-02), and the
+choice of recompiler is now yours (B5)**:
+- step 1 (recompile) passes;
+- step 2 (PC boot) reaches the game's main loop after five fixes, with
+  nothing visible yet (VU1);
+- step 3 (device speed): PS2Recomp's code as is runs at about 63 M guest
+  instructions/s at 1.416 GHz, a fifth of the bar; reworked code
+  generation reaches about 290 M/s on loop code.
+
+Phase 3 was approved
 on 2026-11-01 with three conditions (PHASE_1 C8):
 - PAL S03, S05 and S06 captured before the renderer design is frozen;
 - a renderer built to PHASE_2 B5;
@@ -241,9 +247,17 @@ Three runs on SLUS_208.26:
   them. The change is 13 lines in `control_flow_analyzer.cpp`, behind an
   environment variable, in `private/third_party/trial/ps2recomp-trial.patch`
   (with the step 2 test hooks).
-- **A vs B:** both work. Its discovery splits a few hundred more functions
-  than ours; which split is right doesn't matter for correctness, because
-  every internal target gets a label either way.
+- **A vs B:** both translate everything. Its discovery splits a few
+  hundred more functions than ours. Inside a function, which split is right
+  doesn't matter, because every internal target gets a label either way.
+  **Across functions it does** (found in step 2, boot 3): a function
+  reached *only* through a pointer must be a function start, or calling it
+  fails at run time. Our map missed tiny leaves behind nop padding, such as
+  a `return 0` in the game's script function table. With that fixed
+  (2026-11-02) the map has **5,696 functions** (run B: 5,569 recompiled +
+  127 stubs, still 102 with the fallback, 0 failures). The 89 starts that
+  PS2Recomp's discovery still adds are mid-function labels (jump-table
+  targets, return points after a `jal`).
 - **Against the decision rule** (≥ 95 % of functions recompiled cleanly):
   **met**, 98.1 % as is, 99.93 % with the change.
 
@@ -273,6 +287,13 @@ This matters for step 3 more than the counts above:
   over its resume labels, so a thread switch can unwind the host stack and
   re-enter mid-function. This is how its EE scheduler works; it also means
   returns after an unwind go through table lookups.
+- **The IOP is interpreted, in step with the EE's call count.** Every
+  guest call charges 8 "EE cycles" and every loop back-edge 32, and the
+  R3000A interpreter runs one IOP cycle per 8 of those. So the device
+  pays for interpreting the IOP (a 36.8 MHz CPU) on top of the EE code.
+  While the EE runs, IOP timing (audio streaming, disc reads) follows how
+  many calls the EE makes, not how much time passes; only while the EE
+  idles does it follow the clock.
 - **Thread switches throw a C++ exception** (`EeDispatcherTransfer`) to
   unwind the host stack: every blocking wait (semaphore, sleep, vsync)
   pays an exception unwind through the guest call depth. That's cheap
@@ -362,24 +383,158 @@ GS (the runtime's magenta placeholder). The game spins in its heap setup:
   missing feature of maybe 150–300 lines in the IOP emulator and the
   runtime, not a small fix.
 
-**Where step 2 stands:** three stops so far, two fixed (a build flag, a
-guest-memory layout change), the third understood but not implemented.
-Not yet near the title screen: the language-select screen comes after the
-first file reads.
+**Fix 3: IOP→EE RPC (built 2026-11-02, your go-ahead).** About 230 lines
+in 7 files of the trial copy:
+- IOP side: `sceSifBindRpc` fills the client from the EE server table,
+  `sceSifCallRpc` hands the call to the host and puts the calling IOP
+  thread to sleep (unless it asked not to wait), `sceSifCheckStatRpc`
+  reports calls in flight;
+- runtime side: copies the arguments into the EE server's buffer, queues
+  the server function as an EE invocation, then copies the reply back to
+  the IOP and wakes the caller. End functions on the IOP aren't supported
+  (logged if used).
 
-## B4. Step 3: what it needs
+While doing it, two more slips of the same kind turned up: the EE stubs
+for `sceSifRegisterRpc` and `sceSifSendCmd` read arguments 5–7 from the
+stack, but the EE's EABI passes them in t0–t3 (its `sceSifCallRpc` stub
+gets this right). Both now read the registers.
 
-- The aarch64 C++ cross compiler (`g++-aarch64-linux-gnu`); WSL has only
-  the C one. One `apt` command, which needs your password.
-- The RG40XX H on, with the port-2222 SSH started (NOTES.md). Its address
-  is 192.168.1.4 since 2026-11-01.
-- **Input to replay.** The trial patch can now record one guest call on the
-  PC (`PS2PORT_SNAP_PC`: registers, RAM and scratchpad before and after,
-  and every function it reached). The device harness would run that call
-  from the generated code with a stand-in runtime of the same cost (the
-  generated code calls only about a dozen runtime functions), with a
-  counting build for exact guest instruction counts.
-- **Catch:** the PC boot doesn't reach gameplay, so the only calls to
-  record are boot code. Gameplay RAM is in the Phase 1 PCSX2 savestates;
-  replaying a per-frame function from one of those is possible, but the
-  savestate stops a thread mid-frame, so it needs care.
+**Boot 3 (fixes 1–3), 180 s, X pressed every 5 s from second 20:**
+- **The RPC fix works:** the game's reads complete and it loads several
+  files in a row (the dispatch trace shows the read path repeating).
+- Then it builds its script function table (`ScriptFns`) and calls one of
+  the pointers in it, 0x288A38, which run B didn't have as a function:
+  **stop 4**, still before any frame.
+- Fix 4 is in our tooling, not PS2Recomp: the function map (B1, "A vs
+  B").
+
+**Boot 4 (fixes 1–4), 240 s, X presses:**
+- No missing functions. One IOP import is unhandled: `cdvdman` 44 (I
+  believe `sceCdGetReadPos`, used by streaming), right after the directory
+  cache. Not yet known to matter.
+- The EE then sits in the game's vsync wait for the rest of the run, still
+  with no frame. That wait drains a semaphore with `PollSema` until it
+  returns -1. **Stop 5:** PS2Recomp's `PollSema` returns -419
+  (`KE_SEMA_ZERO`, the IOP kernel's code) on an empty semaphore, so the
+  loop never ends. The EE kernel returns -1.
+- **Fix 5:** the EE `PollSema` handler returns -1 on failure (one line).
+
+**Boot 5 (fixes 1–5), 240 s, X presses:**
+- **The game reaches its main loop.** For the whole run the EE sits in a
+  function that calls the per-frame routines and increments a frame
+  counter. The display is set up: frames are now black, not the "no
+  frame" magenta.
+- **Stop 6, VU1:** the log fills with 45,349 "VU1 reserved lower"
+  errors, all for the same word `0xFFFFFFFB` at 4 addresses near the top
+  of VU1 code memory. This game's microcode is resident and fills the
+  whole 16 KB (PHASE_1 A6), so real code should be there: it looks like
+  the microcode upload (VIF1 `MPG` from the DMA chain) didn't land, not
+  a missing opcode. All 3D goes through VU1, so nothing is drawn.
+- Not diagnosed further. VU1 and GS are the parts the port replaces
+  anyway (VU1 → NEON / HLE, GS → GLES), so this stop matters less for the
+  decision than the EE and IOP ones.
+
+## B4. Step 3: speed on the device (run on the RG40XX H, 2026-11-02)
+
+**Method.**
+- **Recording on the PC.** The trial patch records one guest call
+  (`PS2PORT_SNAP_PC`): registers, RAM and scratchpad before and after, and
+  every function it reached. A second hook (`PS2PORT_CALLCOUNT`) counts
+  function entries, used to pick the calls. In boot 5's main loop the frame
+  loop runs about 28 times a second.
+- **The harness** (`private/third_party/trial/harness/`, private because
+  it builds against PS2Recomp's headers and the generated code):
+  - the generated files the recorded call reaches, plus a stand-in for
+    PS2Recomp's runtime with the same per-call work: checkpoint charge,
+    three atomic flag loads, the IOP cycle carry, a dispatch-history push,
+    two table lookups and an indirect call;
+  - **not modelled:** the IOP step the real runtime takes on every guest
+    call (servicing IOP DMA, callbacks and timers and looking for a ready
+    IOP thread). On the PC profile that was about 1 % of all time against
+    12 % in generated code;
+  - uncontended semaphores and the thread ID answer as an idle kernel
+    would; any other syscall, MMIO, break or VU0 microprogram makes a replay
+    invalid (none happened);
+  - each iteration restores only the RAM pages the call changes and times
+    only the call; **every build is checked against the PC's result**
+    (RAM, v0, sp);
+  - a counting build gives the exact guest instruction count (as T6 did);
+  - aarch64 build with PS2Recomp's ARM flags and sse2neon v1.9.1, static.
+- **On the device:** EmulationStation stopped, `performance` governor
+  (1.512 GHz, restored after), 3 runs of 500–5,000 iterations; medians
+  repeat within 1 %. Figures at 1.416 GHz (the 4-core sustained clock) are
+  scaled from 1.512 GHz.
+
+**Recorded calls** (all from the main loop, 800th call of each, except the
+first):
+
+| Call | What it is | Guest instr. | Calls inside | Loop checkpoints |
+|---|---|---|---|---|
+| `FUN_002ce218` | small per-frame routine (100th call) | 573 | 6 | 9 |
+| `FUN_001b3988` | per-frame routine, straight-line | 2,200 | 21 | 26 |
+| `FUN_001b0fd0` | per-frame routine with loops | 24,049 | 403 | 1,818 |
+
+**The aarch64 build of PS2Recomp's code gives exactly the PC's result**
+(0 bytes of RAM differ, same v0 and sp), under qemu and on the device.
+
+**Speed, and what code-generation changes buy** (each variant also passes
+the result check):
+- **v0:** PS2Recomp's output as is;
+- **v1:** guest registers read and written as plain 64-bit integers instead
+  of 128-bit vector lanes (a header change);
+- **v2:** v1 without the per-instruction `ctx->pc` stores;
+- **v3:** v2 with loads and stores going straight to RAM (no MMIO check,
+  no wrap handling; valid here because these calls touch no MMIO) and no
+  out-of-line loop checkpoint;
+- **v4:** v3 with a lean call (one table lookup and the call), roughly what
+  direct calls cost.
+
+| | `FUN_001b0fd0` (loops) | | `FUN_001b3988` (straight-line) | |
+|---|---|---|---|---|
+| | per call | M guest instr/s at 1.512 → 1.416 GHz | per call | M guest instr/s at 1.512 → 1.416 GHz |
+| v0 as is | 358 µs | **67 → 63** | 66.4 µs | 33 → 31 |
+| v1 | 312 µs | 77 → 72 | 59.7 µs | 37 → 35 |
+| v2 | 307 µs | 78 → 73 | 55.9 µs | 39 → 37 |
+| v3 | 96 µs | 250 → 234 | 11.6 µs | 190 → 178 |
+| v4 | 77 µs | **312 → 292** | 10.4 µs | 212 → 198 |
+
+ARM code for `FUN_001b0fd0`'s 32 functions: 387 KB as is, 299 KB at v2,
+101 KB at v3. For comparison, T6's struct-style synthetic code ran at
+327 M/s on the same device.
+
+**What this says:**
+- **As it stands, PS2Recomp's code reaches about 63 M guest instructions
+  per second at 1.416 GHz: about a fifth of the 295 M/s bar.**
+- The cost isn't in the translated instructions. It's in how every memory
+  access is wrapped (MMIO check, wrap handling, a lambda per access), the
+  out-of-line scheduler call on every loop iteration, and the call
+  dispatch. The 128-bit register model and the `pc` stores cost less (v1,
+  v2: 15 %).
+- **With those parts reworked, the same translated code runs at about
+  290 M/s on loop-heavy code and about 200 M/s on straight-line code:
+  at the bar, not clearly over it.** Straight-line code stays slower
+  because code size still exceeds the A53's 32 KB instruction cache.
+- v3 and v4 are measurements, not finished designs. A real emitter needs
+  a cheap MMIO path where an access can be one (a range compare), a cheap
+  scheduler checkpoint (a local countdown) and direct calls. That's a
+  rewrite of PS2Recomp's emitter and its runtime calling conventions, not
+  a contained change.
+- **Not measured yet:** the heavy per-frame work. These calls come from
+  the boot screens; the game's big per-frame update (`FUN_002635d0`, a
+  2,613-function call tree) blocked mid-call, so it couldn't be recorded.
+  Gameplay frames will be much heavier than the ~27,000 guest instructions
+  these three routines execute.
+
+## B5. The trial against the decision rule
+
+| Rule (A5) | Result |
+|---|---|
+| Step 1: ≥ 95 % of functions recompile cleanly | **Met.** 98.1 % as is, 99.93 % with a one-line change (B1) |
+| Step 2: near the title screen with contained fixes | **Partly.** The game reaches its main loop with the display set up, after 5 fixes (one of them a ~230-line missing feature, IOP→EE RPC). Nothing visible yet: VU1 runs code that never arrived (stop 6, open) |
+| Step 3: ≥ 295 M/s at 1.416 GHz, or a contained code-generation change gets there | **Not met as is** (63 M/s). Reworked code generation gets to about 290 M/s on loop code, but that's an emitter rewrite, not a contained change |
+
+By the rule as written, that's **option B**. The trial also shows where
+PS2Recomp's value is: its runtime got the game from the ELF entry to the
+main loop, through the IOP modules (including the custom `STREAM.IRX`), the
+kernel and SIF, with five fixes. Its code generation is what doesn't fit
+the A53.
