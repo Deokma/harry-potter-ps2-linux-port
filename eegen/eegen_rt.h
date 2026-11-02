@@ -238,6 +238,11 @@ EG_INLINE bool eg_fzero_ok(float a, float b, float r)
 // and a mantissa, [3] result exponent 255, [4] result exponent 0 (non-zero),
 // [5] zero result with a special operand
 inline uint64_t eg_float_stats[6];
+struct EgFloatPair
+{
+    uint64_t key, count;
+};
+inline EgFloatPair eg_float_pairs[4096];
 EG_NOINLINE inline void eg_float_stat(float a, float b, float r)
 {
     auto e = [](float x) { return (std::bit_cast<uint32_t>(x) >> 23) & 0xFFu; };
@@ -248,6 +253,18 @@ EG_NOINLINE inline void eg_float_stat(float a, float b, float r)
     eg_float_stats[3] += e(r) == 255;
     eg_float_stats[4] += e(r) == 0 && m(r);
     eg_float_stats[5] += (std::bit_cast<uint32_t>(r) << 1) == 0u;
+    // the most common operand pairs (open addressing, 4096 slots)
+    const uint64_t key = (uint64_t)std::bit_cast<uint32_t>(a) << 32 | std::bit_cast<uint32_t>(b);
+    for (uint32_t h = (uint32_t)(key * 0x9E3779B97F4A7C15ull >> 52), n = 0; n < 4096; ++n, h = (h + 1) & 4095)
+    {
+        if (eg_float_pairs[h].count == 0)
+            eg_float_pairs[h].key = key;
+        if (eg_float_pairs[h].key == key)
+        {
+            ++eg_float_pairs[h].count;
+            break;
+        }
+    }
 }
 #define EG_FSTAT(a, b, r) eg_float_stat(a, b, r)
 #else

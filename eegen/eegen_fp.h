@@ -1,4 +1,6 @@
 // eegen: the FPU modes and checks behind float groups (see eegen.py).
+// Generated code must be compiled with -ffp-contract=off: the PS2 rounds
+// every add and multiply, a fused multiply-add would not.
 //
 // eegen mode: flush-to-zero on (A53 FPCR.FZ, x86 MXCSR.FTZ). In a group's
 // fast version, any operation that PS2Recomp's per-operation float model
@@ -113,9 +115,32 @@ EG_INLINE bool eg_fz_on()
 
 #endif
 
+#ifdef EG_FLOAT_STATS
+// why groups re-run: [0] inf / NaN handed on, [1..4] flag bits (A53: IOC OFC
+// UFC IDC; x86: IE DE OE UE)
+inline uint64_t eg_group_why[5];
+EG_NOINLINE inline void eg_group_failed(float k, uint64_t flags)
+{
+    eg_group_why[0] += !(k <= FLT_MAX);
+#if defined(__aarch64__)
+    const uint64_t bits[4] = {0x1u, 0x4u, 0x8u, 0x80u};
+#else
+    const uint64_t bits[4] = {0x1u, 0x8u, 0x10u, 0x2u}; // IE OE UE DE, same order as the A53's
+#endif
+    for (int i = 0; i < 4; ++i)
+        eg_group_why[1 + i] += (flags & bits[i]) != 0;
+}
+#endif
+
 EG_INLINE bool eg_fp_ok(float k)
 {
-    return k <= FLT_MAX && (eg_fp_flags(k) & EG_FP_BAD) == 0;
+    const auto flags = eg_fp_flags(k);
+    const bool ok = k <= FLT_MAX && (flags & EG_FP_BAD) == 0;
+#ifdef EG_FLOAT_STATS
+    if (!ok)
+        eg_group_failed(k, flags);
+#endif
+    return ok;
 }
 
 EG_INLINE void eg_mode_eegen()

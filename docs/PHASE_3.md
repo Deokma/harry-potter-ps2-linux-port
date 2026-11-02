@@ -11,6 +11,12 @@ choice of recompiler is now yours (B5)**:
   instructions/s at 1.416 GHz, a fifth of the bar; reworked code
   generation reaches about 290 M/s on loop code.
 
+**Part C (milestone 1) status, 2026-11-03:** our generator (`eegen/`) runs
+a real gameplay frame on the device byte-identical to the PS2Recomp
+reference in **61.2 ms at 1.416 GHz**, half of PS2Recomp's code with quick
+fixes (124 ms), but still 1.8x over the 30 fps budget for the main frame
+alone. A stop under condition 3; options in C5.
+
 Phase 3 was approved
 on 2026-11-01 with three conditions (PHASE_1 C8):
 - PAL S03, S05 and S06 captured before the renderer design is frozen;
@@ -748,6 +754,113 @@ output, so the two mix function by function):
   needs its own design).
 
 A function that uses an instruction eegen doesn't handle yet keeps
-PS2Recomp's code. That is 15 of the 240 hot functions (13 use VU0 macro
-instructions, 2 use 128-bit MMI); over the whole program 5,609 of 5,708
-functions translate.
+PS2Recomp's code: 15 of the 240 hot functions (13 use VU0 macro
+instructions, 2 use 128-bit MMI); over the whole program 81 of 5,708. The
+127 functions PS2Recomp replaces with native code (memcpy, pad, DMA, SIF
+RPC, ...) stay native (`--native`): translating their guest code instead
+was the one real divergence found (see below).
+
+**Correctness (x86 replay, every variant below):** the frame's RDRAM is
+byte-identical to the PS2Recomp reference, v0 and sp match, and the counting
+build executes exactly the reference's **8,540,728 guest instructions**,
+with the same syscalls, hardware accesses, stubs and VU0 programs. Two
+checks were needed to get there:
+- PS2Recomp emits nothing for a `nop` in a delay slot, so its count skips
+  them; eegen now counts the same way (a counting convention, not a
+  semantic difference);
+- the first whole-program run differed by 5 bytes and one semaphore call:
+  eegen had translated the guest code of functions PS2Recomp runs natively
+  (found by bisection; `memcpy` alone accounted for 44,301 instructions).
+
+**Device, RG40XX H at 1.416 GHz, 20 runs each:**
+
+| Variant | Best / median | Cycles | Host instructions (per guest) | L1I misses | i-cache stall | Load stall |
+|---|---|---|---|---|---|---|
+| v4 (C2, PS2Recomp's code, quick fixes) | 124.1 / 124.9 ms | 176.6 M | 103.8 M (12.2) | 2.44 M | 60.1 M | 17.3 M |
+| eegen, hot set (225 functions) | 70.3 / 70.8 ms | 101.0 M | 62.2 M (7.3) | 1.40 M | 31.9 M | 12.6 M |
+| + one-test RAM check, FP loads | 70.0 / 70.9 ms | 100.3 M | 60.6 M (7.1) | 1.38 M | 30.6 M | 12.2 M |
+| **eegen, whole program** (5,500 functions, natives kept) | **62.5 / 63.3 ms** | 90.8 M | 58.9 M (6.9) | 1.27 M | 24.0 M | 10.8 M |
+| **+ float groups** | **61.2 / 62.4 ms** | 87.8 M | 53.5 M (6.3) | 1.13 M | 24.3 M | 11.3 M |
+| hot set, float checks removed (**wrong results**, timing only) | 50.1 / 66.7 ms | 78.9 M (mean) | 41.9 M (4.9) | 0.82 M | | |
+
+Both whole-program rows are byte-identical on the device too. The
+no-check row overstates what the checks cost: without them the
+exponent-255 slow paths never run either, and the program takes a
+different path (111,554 bytes differ).
+
+**Where the whole-program build's time goes** (SIGPROF, 973 samples):
+eegen's code 72.6 %, PS2Recomp's float slow paths **10.5 %**, PS2Recomp's
+code for the 81 functions eegen can't translate yet (mostly VU0 macro
+code) 11.1 %, dispatch 1.6 %, other 4.2 %. The hottest single function, a
+4x4 matrix multiply (`0x2D7878`), is 9.4 %.
+
+**Float slow path** (`EG_FLOAT_STATS`, x86): 87,309 calls per frame from
+eegen's code, almost all with an exponent-255 operand (75,469) or result
+(83,109), i.e. PS2 values a host float cannot hold, not zeros. The most
+common operands are `0xFFFFFFFF`, `0x7FFFFFFF`, `0xFFFFFFF1`, `0xFFE11748`,
+often against 0: integers (-1, -15) or "max" markers in float registers,
+legal huge numbers on the PS2, NaNs on the host. A property of this game's
+data; about 6.6 ms per frame on the device.
+
+**Float checks** are the biggest single cost left: compiling them out cuts
+host instructions by 31 %. On the in-order A53 each operation's check
+waits for its result and ends a basic block, so nothing overlaps. Hence
+**float groups** (`eegen/eegen_fp.h`): a run of side-effect-free
+instructions inside a block is computed once in fresh locals with plain
+host arithmetic and the FPU in flush-to-zero mode, then checked once (the
+sticky invalid / overflow / underflow / input-denormal flags, and an inf /
+NaN test on the values the run hands on). If anything could have needed
+PS2Recomp's slow path, the per-operation version runs again from the same
+state. Nothing in a group writes memory, and a non-RDRAM load leaves for
+the exact version before it happens, so the re-run is safe. On the hot
+set: byte-identical, exact instruction count, 392,614 groups committed
+fast and 37,140 (8.6 %) re-run per frame.
+ On the device the first float-group build differed by 5,614 bytes: GCC
+fused multiplies and adds into `fmadd` on aarch64 (allowed by default;
+x86 without FMA can't), which rounds once instead of twice. Generated code
+is now built with `-ffp-contract=off`.
+
+**Float groups gain little (2 %)**, measured: on the A53 reading FPSR costs
+about 5 cycles (it waits for the last float result), clearing it 3, a
+flush-to-zero on/off pair 11 (`bench/fpsr_cost.cpp`), so a group costs
+12–15 cycles; the game's float code is mostly dependent chains (sums of
+products), which wait on the 4-cycle latency either way; and 8.6 % of
+groups re-run, 86 % of those because real inf / NaN values (the integers
+above) pass through.
+
+## C5. Where milestone 1 stands, and the options (stop under condition 3)
+
+**Milestone 1, the first condition, is met:** a real gameplay frame (NTSC
+slot 2, one call of `0x2635D0`) runs on the device through our own
+generator, byte-identical to the PS2Recomp PC reference with the same
+guest instruction count, measured at 1.416 GHz.
+
+**Against the budget it misses:** 61.2 ms for the main frame alone, against
+33.3 ms at 30 frames/s (1.8x over) and 50 ms at 20 frames/s (1.22x over),
+**before** the work the replay leaves out (C1): 1,116 VU0 microprograms per
+frame, interrupt handlers, other threads, the IOP and rendering. C3's
+estimate (35–40 ms after its options 1–4) was too optimistic: registers in
+locals and direct calls halved the frame (124 → 62.5 ms) as expected, but
+the native FPU gave 2 %, because the byte-exact float model has to stay and
+this game feeds the FPU many exponent-255 values.
+
+**Options left, with what the measurements say:**
+
+| | Option | Basis | Estimate |
+|---|---|---|---|
+| A | Lean exact slow path for exponent-255 / zero operands (e.g. a multiply with a zero-exponent operand is a signed zero) | slow paths 10.5 % | −2 to −4 ms |
+| B | VU0 macro instructions (and the few MMI ones) in eegen | PS2Recomp's code 11.1 % | about −3 ms |
+| C | Code layout for the A53 i-cache: functions ordered by the replay's call profile, hot / cold split, profile-guided optimization with the replay as training run | i-cache stalls 28 % of cycles | −5 to −8 ms, uncertain |
+| D | Fast memory: no per-access RDRAM test (guard pages, a fault handler for MMIO) | 19 % of guest instructions are memory accesses | −2 to −3 ms |
+| E | A hardware-like float model (flush-to-zero both ways, clamping) checked against PCSX2 instead of PS2Recomp | the no-check build: 4.9 instead of 7.1 host instructions per guest | up to −10 ms, but the byte-exact PS2Recomp reference is lost; the PCSX2 one-frame diff (adjustment 2) becomes the check |
+
+A–D together: roughly 45–50 ms for the main frame, so 20 frames/s is
+plausible for it alone, 30 frames/s isn't without E and more. The other
+three A53 cores can take the IOP, audio and rendering, but VU0
+microprograms run in step with the EE thread and add to it.
+
+**Recommendation:** before more generator work, cost what the replay leaves
+out (C1), the VU0 microprograms first (1,116 per frame), then the vblank
+handler (its replay state is built), DMA-end handlers, other threads and
+the IOP's share. If those add more than about 10 ms, 20 frames/s is out of
+reach too, and the options above don't change that.

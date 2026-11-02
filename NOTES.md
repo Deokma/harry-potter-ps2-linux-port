@@ -3,7 +3,7 @@
 Running log: decisions, open questions, commands that worked.
 Phase reports live in `docs/PHASE_N.md`.
 
-## Current state and handoff (updated 2026-11-01)
+## Current state and handoff (updated 2026-11-03)
 
 **Where we are:**
 - Phase 0 done (`docs/PHASE_0.md`).
@@ -33,8 +33,20 @@ Phase reports live in `docs/PHASE_N.md`.
     but takes 124 ms at 1.416 GHz (69 M guest instr/s, 3.7x over the
     33.3 ms budget) with the quick-optimized variant: a stop under plan
     adjustment 3.** Why (C3): 34 % i-cache stalls, 12 host instructions per
-    guest instruction, FPU 43.6 % of the mix. Options listed in C3; waiting
-    on the user.
+    guest instruction, FPU 43.6 % of the mix. The user chose "Prototype hot
+    set".
+  - **Our generator `eegen/` (2026-11-02/03, PHASE_3 C4–C5):** the whole
+    program (5,500 of 5,708 functions; 127 natives and 81 with VU0 macro /
+    MMI / COP0 instructions stay PS2Recomp's) is byte-identical to the
+    reference with the same 8,540,728 guest instructions, on x86 and on the
+    device. **Device: 61.2 ms per frame at 1.416 GHz** (62.5 ms without float
+    groups; v4 was 124 ms). Still 1.8x over 30 fps and 1.22x over 20 fps for
+    the main frame alone; options A–E and the recommendation (cost VU0
+    microprograms, interrupts, threads, IOP first) in C5. **Waiting on the
+    user (condition 3).**
+  - Traps found: PS2Recomp emits nothing for a delay-slot `nop` (count
+    convention); its 127 native stubs must stay native (`--native`); GCC
+    fuses fmul+fadd on aarch64 unless `-ffp-contract=off`.
   - Step 2: the PC boot reaches the game's main loop after 5 fixes (build
     flag, guest memory layout, IOP→EE RPC ~230 lines, our function map,
     `PollSema`). Frames are black: VU1 runs code that never arrived
