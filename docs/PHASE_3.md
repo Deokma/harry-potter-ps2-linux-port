@@ -571,3 +571,18 @@ from `main`, started on the savestate's RAM, is one gameplay frame.
    pinned): instr/s, and A53 PMU counters for the instruction cache.
 5. **IOP interpreter share,** and whether `STREAM.IRX` needs native HLE.
 6. Report; stop if the frame misses the budget (condition 3).
+
+**Plan adjustments (you, 2026-11-02):**
+1. **Cost model:** the budget covers all EE work per frame, not only the
+   `0x2635D0` call: interrupt handlers (vblank, DMA end), other guest
+   threads and callbacks the IOP triggers. State what the stand-in
+   hardware omits and estimate it (traced in the PC run with real timing).
+2. **PCSX2 check:** besides the PS2Recomp reference, load the same
+   savestate in PCSX2, advance exactly one frame, dump RAM and diff against
+   our result, masking known-volatile regions; report mismatches by region.
+3. **De-risk first:** replay the gameplay frame with the quick optimized
+   variant (B4's v4: plain registers, direct RAM, cheap calls, applied to
+   PS2Recomp's output) and report instr/s at 1.416 GHz. **Write the full
+   generator only if that is within about 2x of the budget.**
+4. Short tool output, commit and update NOTES before long steps, batch
+   fixes to keep rebuilds few.
