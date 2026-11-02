@@ -397,4 +397,12 @@ PS2PORT_SNAP_PC=0xADDR PS2PORT_SNAP_NTH=1 PS2PORT_SNAP_FILE=/abs/path/rec \
 python3 -I private/third_party/trial/harness/make_harness.py REC private/third_party/trial/out-b \
     private/third_party/trial/harness
 sh private/third_party/trial/harness/build.sh aarch64 time    # or x86, count
+# milestone 1: replay state for the gameplay frame from a savestate (game data -> private/)
+python -I scripts/make_replay_state.py "D:/ps2port-data/savestates/SLUS-20826 (C71A6146).02.p2s"     private/third_party/trial/ctx_offsets.json private/third_party/trial/rec/frame-ntsc02     --pc 0x2635d0 --sp 0x1ffebd0 --gp 0x3a7570
+# whole-program reference + quick-optimized aarch64 build (WSL, ~45 min)
+sh private/third_party/trial/harness/frame_pipeline.sh frame-ntsc02
+# device run at the pinned budget clock (Git Bash)
+sh scripts/harness_device_run.sh HARNESS REC 20 1416000 -- HARNESS_SKIP=0x2cd6a0 HARNESS_PMU=1
+# RAM diff by region (e.g. replay result vs a PCSX2 savestate one frame later)
+python -I scripts/diff_ram_regions.py A B private/extract/SLUS-20826/files/SLUS_208.26 --mask 0x...:0x...
 ```
