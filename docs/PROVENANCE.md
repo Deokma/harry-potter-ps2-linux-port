@@ -24,6 +24,7 @@ recordings stay in `private/` (condition 4).
 |---|---|---|
 | `eegen/eegen.py` | no code; semantics taken from PS2Recomp's output | our code generator (own decoder, control flow, register dataflow). Where PS2Recomp's emitted semantics differ from the R5900 (sqrt.s reads fs, cvt.w.s rounds, lq/sq keep the low address bits, blez/bgtz/bltz/bgez compare 32 bits) it follows PS2Recomp by default so results can be checked byte for byte; `--hardware-semantics` switches. Instruction semantics (div, madd, lwl/lwr/ldl/ldr/swl/swr/sdl/sdr, mult/multu, the FPU compare and DZ flag) were written to match PS2Recomp's emitted code |
 | `eegen/eegen_rt.h` | partly | built against PS2Recomp's `R5900Context`, `PS2Runtime` and `ps2_runtime_macros.h` (uses its `ps2_f*_slow`, `ps2_fdiv`, `ps2_fsqrt`, `ps2_frsqrt`); the inline float fast path reproduces PS2Recomp's float model; the memory access helpers mirror its `READ*` / `WRITE*` address split |
+| `eegen/eegen_fp.h` | no | FPU modes and the float-group check (ours); it detects exactly the cases PS2Recomp's float model sends to its slow path |
 | `scripts/sample_profile.py` | no | |
 | `scripts/*` | no | `ps2recomp_trial.sh` and `compile_generated.sh` drive PS2Recomp's tools but contain none of its code |
 | `docs/*` | no | describe PS2Recomp's behaviour from reading and running it |

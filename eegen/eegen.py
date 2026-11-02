@@ -532,6 +532,7 @@ class Program:
                 if line.strip():
                     self.native.add(int(line.split()[0], 16))
         self.hw = args.hardware_semantics
+        self.fp_groups = not args.no_float_groups
         self.ours = set()
 
     def callee(self, t):
@@ -605,7 +606,7 @@ def build_nodes(prog, start, end):
         elif i.kind == "break":
             into.append(Node("sync", count(i), call="break", addr=i.addr))
         else:
-            into.append(Node("op", count(i) + i.code, i.uses, i.defs))
+            into.append(Node("op", count(i) + i.code, i.uses, i.defs, ins=i, cnt=count(i)))
 
     def exit_to(t, into):
         into.append(Node("exit", fall=False, how="jump", target=t))
@@ -762,9 +763,123 @@ def reload(keys):
     return " ".join(out)
 
 
+# --------------------------------------------------------------------------
+# float groups
+# --------------------------------------------------------------------------
+# A run of side-effect-free instructions inside a basic block is emitted
+# twice. The fast version computes into fresh locals with plain host float
+# arithmetic, with the FPU in flush-to-zero mode (eegen mode, see
+# eegen_rt.h), then asks once whether any operation could have needed
+# PS2Recomp's slow path: the sticky invalid / overflow / underflow /
+# input-denormal flags, and an inf / NaN test on the float values the group
+# hands on. If not, the locals are committed; if so, the exact version (the
+# per-operation code, flush-to-zero off) runs the group again from the same
+# state. Nothing in a group writes memory (a load that is not RDRAM leaves
+# for the exact version before it happens), so running it twice is safe.
+
+FP_ARITH = {"add.s", "sub.s", "mul.s", "adda.s", "suba.s", "mula.s"}
+FP_SENSITIVE = FP_ARITH | {"c.eq.s", "c.lt.s", "c.le.s"}
+GROUP_OK = FP_SENSITIVE | {
+    "mov.s", "neg.s", "abs.s", "mtc1", "mfc1", "cvt.s.w", "cvt.w.s", "c.f.s", "nop", "sync", "pref",
+    "lb", "lh", "lw", "lbu", "lhu", "lwu", "ld", "lwc1", "mfhi", "mflo",
+    "sll", "srl", "sra", "sllv", "srlv", "srav", "addu", "subu", "and", "or", "xor", "nor", "slt", "sltu",
+    "daddu", "dsubu", "dsll", "dsrl", "dsra", "dsll32", "dsrl32", "dsra32", "dsllv", "dsrlv", "dsrav",
+    "addiu", "slti", "sltiu", "andi", "ori", "xori", "lui", "daddiu"}
+SIMPLE = re.compile(r"([rf]\d+) = (.*);")
+REG = re.compile(r"\b([rf]\d{1,2})\b")
+
+
+def group_ok(n):
+    i = n.extra.get("ins")
+    if n.kind != "op" or i is None or i.mn not in GROUP_OK:
+        return False
+    return not i.defs or (len(i.defs) == 1 and SIMPLE.fullmatch(i.code) is not None)
+
+
+def float_groups(nodes):
+    """[start, end) node ranges: runs of group_ok nodes that nothing jumps
+    into after their first node, with at least one flush-sensitive op."""
+    targeted = set()
+    for n in nodes:
+        for t in n.targets:
+            targeted.add(t if isinstance(t, str) else f"L_{t:x}")
+    groups, k = [], 0
+    while k < len(nodes):
+        if not group_ok(nodes[k]):
+            k += 1
+            continue
+        j = k + 1
+        while j < len(nodes) and group_ok(nodes[j]) and nodes[j].label not in targeted:
+            j += 1
+        if any(nodes[x].extra["ins"].mn in FP_SENSITIVE for x in range(k, j)):
+            groups.append((k, j))
+        k = j
+    return groups
+
+
+def fast_expr(expr, exact):
+    expr = (expr.replace("eg_fadd(", "EG_FADD_FAST(").replace("eg_fsub(", "EG_FSUB_FAST(")
+            .replace("eg_fmul(", "EG_FMUL_FAST("))
+    return expr.replace("EG_LD(", f"EG_LD_OR({exact}, ")
+
+
+def emit_group(nodes, s, e, gid):
+    """C++ for nodes[s:e] as a float group (labels: the caller emits the
+    first node's)."""
+    exact, done = f"G{gid}_x", f"G{gid}_e"
+    cur, produced, handed_on, outs, fast = {}, set(), set(), [], []
+    for x in range(s, e):
+        i = nodes[x].extra["ins"]
+        arith = i.mn in FP_ARITH
+        for u in i.uses:
+            name = cur.get(u)
+            if name in produced and not arith:
+                handed_on.add(name)
+        rename = lambda text: REG.sub(lambda m: cur.get(m.group(1), m.group(1)), text)
+        if i.defs:
+            dst, expr = SIMPLE.fullmatch(i.code).groups()
+            name = f"{dst}_{gid}_{x - s}"
+            fast.append(f"{'float' if dst[0] == 'f' else 'uint64_t'} {name} = {fast_expr(rename(expr), exact)};")
+            cur[dst] = name
+            if arith:
+                produced.add(name)
+        elif i.mn in ("adda.s", "suba.s", "mula.s"):
+            value = fast_expr(rename(i.code[len("ctx->f_acc = "):-1]), exact)
+            fast.append(f"const float acc_{gid}_{x - s} = {value}; ctx->f_acc = acc_{gid}_{x - s};")
+            outs.append(f"acc_{gid}_{x - s}")
+        elif i.code:
+            fast.append(fast_expr(rename(i.code), exact))
+    final = set(cur.values())
+    outs += sorted(n for n in produced if n in handed_on or n in final)
+    terms = [f"fabsf({o})" for o in outs] or ["0.0f"]
+    while len(terms) > 1:  # a balanced sum: short dependency chains
+        terms = [f"({terms[k]} + {terms[k + 1]})" if k + 1 < len(terms) else terms[k] for k in range(0, len(terms), 2)]
+    commit = " ".join(f"{r} = {n};" for r, n in sorted(cur.items()))
+    counts = "".join(nodes[x].extra["cnt"] for x in range(s, e))
+    lines = ["    { " + " ".join(fast) + f" const float k_ = {terms[0]}; "
+             f"if (EG_LIKELY(eg_fp_ok(k_))) {{ {commit} {counts}EG_GROUP_FAST(); goto {done}; }} }}",
+             f"{exact}: EG_GROUP_EXACT(); eg_exact_enter();"]
+    for x in range(s, e):
+        if x > s and nodes[x].label:
+            lines.append(f"{nodes[x].label}: ;")
+        if nodes[x].code:
+            lines.append("    " + nodes[x].code)
+    lines.append(f"    eg_exact_leave(); {done}: ;")
+    return lines
+
+
+def call_other(prog, fn):
+    """A call into the runtime's code (PS2Recomp's functions, native stubs)
+    runs with the FPU in PS2Recomp's mode."""
+    if prog.fp_groups and not fn.startswith("EG_"):
+        return f"eg_mode_ps2recomp(); {fn}(rdram, ctx, runtime); eg_mode_eegen();"
+    return f"{fn}(rdram, ctx, runtime);"
+
+
 def emit_function(prog, start, end):
     nodes = build_nodes(prog, start, end)
     din, lin, lout = dataflow(nodes)
+    groups = {s: e for s, e in float_groups(nodes)} if prog.fp_groups else {}
     regs = set()
     temps = []
     callees = set()
@@ -773,10 +888,17 @@ def emit_function(prog, start, end):
         if "temp" in n.extra:
             temps.append(n.extra["temp"])
     body = []
+    skip_to = 0
     for k, n in enumerate(nodes):
+        if k < skip_to:
+            continue
         line = []
         if n.label:
             body.append(f"{n.label}: ;")
+        if k in groups:
+            body.extend(emit_group(nodes, k, groups[k], k))
+            skip_to = groups[k]
+            continue
         if n.kind == "op":
             if n.code:
                 line.append(n.code)
@@ -796,7 +918,7 @@ def emit_function(prog, start, end):
                 fn = prog.callee(t)
                 if fn:
                     callees.add(fn)
-                    line.append(f"ctx->pc = 0x{t:x}u; {fn}(rdram, ctx, runtime); "
+                    line.append(f"ctx->pc = 0x{t:x}u; {call_other(prog, fn)} "
                                 f"if (EG_UNLIKELY(ctx->pc != 0x{ret:x}u)) {{ if (ctx->pc != 0x{t:x}u) return; ctx->pc = 0x{ret:x}u; }}")
                 else:
                     line.append(f"if (!runtime->dispatchGuestBranch(rdram, ctx, 0x{t:x}u, 0x{e['addr']:x}u, 0x{ret:x}u, "
@@ -819,14 +941,16 @@ def emit_function(prog, start, end):
                 fn = prog.callee(t) if t in prog.starts else None
                 if fn:
                     callees.add(fn)
-                    line.append(f"ctx->pc = 0x{t:x}u; {fn}(rdram, ctx, runtime); return;")
+                    line.append(f"ctx->pc = 0x{t:x}u; {call_other(prog, fn)} return;")
                 else:
                     line.append(f"ctx->pc = 0x{t:x}u; return;")
         text = " ".join(x for x in line if x)
         if text:
             body.append("    " + text)
-    out = [f"// eegen: guest function 0x{start:08x} - 0x{end:08x}",
-           '#include "eegen_rt.h"', ""]
+    out = [f"// eegen: guest function 0x{start:08x} - 0x{end:08x}", '#include "eegen_rt.h"']
+    if prog.fp_groups:
+        out.append('#include "eegen_fp.h"')
+    out.append("")
     for fn in sorted(callees):
         if fn != f"EG_{start:08x}":
             out.append(f"void {fn}(uint8_t *, R5900Context *, PS2Runtime *);")
@@ -861,6 +985,7 @@ def main():
     ap.add_argument("--native")
     ap.add_argument("--skip", default="")
     ap.add_argument("--hardware-semantics", action="store_true")
+    ap.add_argument("--no-float-groups", action="store_true")
     args = ap.parse_args()
     prog = Program(args)
     ends = dict(prog.funcs)
@@ -903,6 +1028,8 @@ def main():
             f.write(f"    {{0x{a:x}u, EG_{a:08x}}},\n")
         f.write("    {0u, nullptr},\n};\n")
         f.write(f"const unsigned eg_function_count = {len(prog.ours)}u;\n")
+        # the FPU mode the functions expect (eegen_fp.h)
+        f.write(f"extern const bool eg_float_groups = {'true' if prog.fp_groups else 'false'};\n")
     reasons = collections.Counter(re.sub(r" at 0x[0-9a-f]+", "", r) for r in refused.values())
     with open(out / "eegen_report.txt", "w", newline="\n") as f:
         f.write(f"translated {len(prog.ours)} of {len(wanted)} functions"
