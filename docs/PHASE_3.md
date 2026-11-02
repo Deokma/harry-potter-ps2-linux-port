@@ -626,3 +626,30 @@ code generator:
   server `STREAM.IRX` calls (`0x2F58B8`), RPC end callbacks;
 - **VU0 microprograms** and the **native stubs' own work** (pad, sound RPC);
 - everything outside the EE: GS, VU1, VIF, IPU, SPU2 and the IOP itself.
+
+## C2. The gameplay frame on the device (2026-11-02): 3.7x over budget
+
+**Reference (PC, PS2Recomp's code as is):** one call of `0x2635D0` on NTSC
+slot 2 runs **8,540,728 guest instructions**, 148,489 calls, 263,845 loop
+checkpoints, 2,333 syscalls (semaphores, `GetThreadId` x1,108,
+`ReferSemaStatus` x241), about 30 DMA register accesses (the frame's DMA
+kicks), **1,116 VU0 microprograms** (skipped by the stand-in; their cost and
+their results are missing), `scePadGetState` x11 and one SIF RPC. At 30
+frames/s that is 256 M guest instructions/s for the main frame alone.
+
+**Device (quick-optimized variant v4, aarch64, 1.416 GHz pinned, 20 runs):**
+
+| | Per frame |
+|---|---|
+| Result vs PC reference | **0 bytes of RAM differ**, v0 and sp match |
+| Time | **124.1 ms** best, 124.9 ms median |
+| Guest instructions/s | **69 M** |
+| Budget at 30 fps | 33.3 ms: **3.7x over** |
+| Cycles / host instructions | 176.6 M / 103.8 M: 12 host instructions per guest instruction, IPC 0.59 |
+| L1 instruction cache | 81.1 M accesses, **2.44 M misses** (3.0 %, 23 per 1,000 instructions) |
+| Branch misses | 1.12 M |
+
+The small trial calls (B4) reached 293 M/s at the same clock; gameplay code
+costs about 21 A53 cycles per guest instruction against about 5 there.
+**By plan adjustment 3 this is a stop:** no full generator until the cost is
+understood and you choose how to go on.

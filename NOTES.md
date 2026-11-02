@@ -29,8 +29,10 @@ Phase reports live in `docs/PHASE_N.md`.
     `0x2635D0`, sp 0x1FFEBD0); the harness now replays a whole program
     against an idle-hardware model (`trial/harness/hwmodel.inc`), with
     PS2Recomp's `LibC.cpp` for math/libc stubs and counted defaults for the
-    rest. Next: reference run (PS2Recomp code as is, x86), then the quick
-    optimized variant on the device (plan adjustment 3).
+    rest. **Result (C2): the gameplay frame runs correctly on the device
+    but takes 124 ms at 1.416 GHz (69 M guest instr/s, 3.7x over the
+    33.3 ms budget) with the quick-optimized variant: a stop under plan
+    adjustment 3.** Next: why (instruction mix), then options to the user.
   - Step 2: the PC boot reaches the game's main loop after 5 fixes (build
     flag, guest memory layout, IOP→EE RPC ~230 lines, our function map,
     `PollSema`). Frames are black: VU1 runs code that never arrived
