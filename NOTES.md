@@ -24,6 +24,13 @@ Phase reports live in `docs/PHASE_N.md`.
 - **PS2Recomp trial (PHASE_3 Part B) done 2026-11-02. User chose the
   hybrid route (D3.4); milestone 1 (PHASE_3 Part C) in progress.**
   - Step 1: every function translates; 98.1 % without the fallback.
+  - **Milestone 1 status (2026-11-02):** replay states for NTSC slots 2
+    and 3 built (`scripts/make_replay_state.py`, frame = one call of
+    `0x2635D0`, sp 0x1FFEBD0); the harness now replays a whole program
+    against an idle-hardware model (`trial/harness/hwmodel.inc`), with
+    PS2Recomp's `LibC.cpp` for math/libc stubs and counted defaults for the
+    rest. Next: reference run (PS2Recomp code as is, x86), then the quick
+    optimized variant on the device (plan adjustment 3).
   - Step 2: the PC boot reaches the game's main loop after 5 fixes (build
     flag, guest memory layout, IOP→EE RPC ~230 lines, our function map,
     `PollSema`). Frames are black: VU1 runs code that never arrived
