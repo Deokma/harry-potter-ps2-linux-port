@@ -586,3 +586,43 @@ from `main`, started on the savestate's RAM, is one gameplay frame.
    generator only if that is within about 2x of the budget.**
 4. Short tool output, commit and update NOTES before long steps, batch
    fixes to keep rebuilds few.
+
+## C1. The replay (built 2026-11-02)
+
+**State** (`scripts/make_replay_state.py`): RAM, scratchpad and VU0's vf/vi
+registers from the savestate (VU0 holds live values between calls: vf1–3 look
+like a rotation matrix); VU0 data and micro memory alongside. Registers for
+the call: pc `0x2635D0`, sp `0x1FFEBD0` (the frame function saves `ra` at
+0(sp) after `addiu sp, -0x40`, and its saved `ra` sits at `0x1FFEBD0 - 0x40`),
+gp `0x3A7570` (crt0), ra 0. The function takes no arguments.
+
+**What the replay runs:** the whole program (all 5,696 functions) is compiled
+into the harness; one call of `0x2635D0` runs to its return.
+
+**The idle-hardware model** (`trial/harness/hwmodel.inc`), the same for every
+code generator:
+- scratchpad and VU memories are real memory; other I/O registers remember
+  the last value written;
+- every DMA transfer has finished (CHCR.STR reads 0, D_STAT reads all
+  channels complete); GIF / VIF status idle; timers advance per read;
+- every syscall answers at once: counting semaphores (`PollSema` returns -1
+  when empty, a wait that would block counts as satisfied), the thread ID,
+  default 0 for the rest, counted by number;
+- PS2Recomp's own `LibC.cpp` for the 16 math / memory / string stubs the
+  game binds natively (identical semantics for both generators); the other
+  110 native stubs (pad, memory card, CD, MPEG, sound, SIF RPC) return 0 and
+  are counted;
+- VU0 microprograms (`vcallms`) are counted and skipped;
+- the vsync wait (`0x2CD6A0`) returns at once (`HARNESS_SKIP`): on the PS2
+  it is idle time, and the vblank handler it waits for is costed separately.
+
+**What it leaves out, to be costed separately (plan adjustment 1):**
+- **interrupt handlers:** vblank (`0x2CD788`, which also calls a game
+  callback through the pointer at `0x328480`; two per frame), DMA-end
+  handlers, alarms;
+- **other guest threads** (the boot profile showed a long-running thread at
+  `0x17DD50`);
+- **work the IOP triggers on the EE:** SIF command handlers, the EE RPC
+  server `STREAM.IRX` calls (`0x2F58B8`), RPC end callbacks;
+- **VU0 microprograms** and the **native stubs' own work** (pad, sound RPC);
+- everything outside the EE: GS, VU1, VIF, IPU, SPU2 and the IOP itself.
