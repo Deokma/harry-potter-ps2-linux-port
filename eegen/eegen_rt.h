@@ -254,6 +254,13 @@ EG_NOINLINE inline void eg_float_stat(float a, float b, float r)
 #define EG_FSTAT(a, b, r) ((void)0)
 #endif
 
+#ifdef EG_NO_FLOAT_CHECK
+// timing experiment only (wrong results for PS2-special values): plain host
+// arithmetic, to measure what the per-operation checks cost
+EG_INLINE float eg_fadd(float a, float b) { return a + b; }
+EG_INLINE float eg_fsub(float a, float b) { return a - b; }
+EG_INLINE float eg_fmul(float a, float b) { return a * b; }
+#else
 EG_INLINE float eg_fadd(float a, float b)
 {
     const float r = a + b;
@@ -280,6 +287,8 @@ EG_INLINE float eg_fmul(float a, float b)
     EG_FSTAT(a, b, r);
     return ps2_fmul_slow(a, b);
 }
+
+#endif
 
 EG_INLINE float eg_fbits(uint32_t v) { return std::bit_cast<float>(v); }
 EG_INLINE uint32_t eg_bits(float f) { return std::bit_cast<uint32_t>(f); }

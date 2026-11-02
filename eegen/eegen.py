@@ -2,7 +2,7 @@
 """eegen: the port's own R5900 code generator (Phase 3, milestone 1).
 
     python3 -I eegen/eegen.py ELF FUNCTION_MAP OUT_DIR --functions FILE
-        [--ps2recomp-table REGISTER_FUNCTIONS_CPP] [--skip ADDR,...]
+        [--ps2recomp-table REGISTER_FUNCTIONS_CPP] [--native FILE] [--skip ADDR,...]
         [--hardware-semantics]
 
 Translates whole guest functions (ranges from FUNCTION_MAP, the CSV that
@@ -28,7 +28,9 @@ What it does differently from PS2Recomp's generator:
   - FPU arithmetic with PS2Recomp's float model inline (eegen_rt.h).
 
 FILE lists function start addresses (first column, hex), e.g. the .hot list
-of scripts/sample_profile.py. A function that uses an instruction eegen does
+of scripts/sample_profile.py. --native lists functions the runtime replaces
+with native code (PS2Recomp's stubs: memcpy, pad, DMA, SIF RPC, ...); those
+are never translated, calls go to the runtime's version. A function that uses an instruction eegen does
 not handle yet is left out (reported) and keeps PS2Recomp's code.
 
 By default the semantics follow PS2Recomp's output exactly where it differs
@@ -524,6 +526,11 @@ class Program:
                 if int(m.group(2), 16) == int(m.group(3), 16):
                     self.ps2recomp[int(m.group(3), 16)] = m.group(1)
         self.skip = {int(x, 16) for x in args.skip.split(",")} if args.skip else set()
+        self.native = set()
+        if args.native:
+            for line in Path(args.native).read_text().splitlines():
+                if line.strip():
+                    self.native.add(int(line.split()[0], 16))
         self.hw = args.hardware_semantics
         self.ours = set()
 
@@ -851,6 +858,7 @@ def main():
     ap.add_argument("out_dir")
     ap.add_argument("--functions", required=True)
     ap.add_argument("--ps2recomp-table")
+    ap.add_argument("--native")
     ap.add_argument("--skip", default="")
     ap.add_argument("--hardware-semantics", action="store_true")
     args = ap.parse_args()
@@ -872,6 +880,9 @@ def main():
             continue
         if a in prog.skip:
             refused[a] = "in the skip list"
+            continue
+        if a in prog.native:
+            refused[a] = "native in the runtime"
             continue
         try:
             build_nodes(prog, a, ends[a])

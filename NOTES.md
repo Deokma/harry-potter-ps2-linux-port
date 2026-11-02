@@ -407,6 +407,16 @@ python -I scripts/make_replay_state.py "D:/ps2port-data/savestates/SLUS-20826 (C
 sh private/third_party/trial/harness/frame_pipeline.sh frame-ntsc02
 # device run at the pinned budget clock (Git Bash)
 sh scripts/harness_device_run.sh HARNESS REC 20 1416000 -- HARNESS_SKIP=0x2cd6a0 HARNESS_PMU=1
+# time profile on the device: add HARNESS_SAMPLE=/userdata/ps2bench/harness/x.samples to the run,
+# scp it back, then (WSL) per function / hot list:
+python3 -I scripts/sample_profile.py HARNESS SAMPLES --nm aarch64-linux-gnu-nm --hot OUT.hot --cover 100
+# eegen (our generator) on a function list, into the harness (game-derived output -> private/)
+python3 -I eegen/eegen.py private/extract/SLUS-20826/files/SLUS_208.26 private/third_party/trial/function_map.csv \
+    private/third_party/trial/harness/gen_eg --functions LIST \
+    --ps2recomp-table private/third_party/trial/out-b/register_functions.cpp --skip 0x2cd6a0
+REUSE=1 EG=1 sh private/third_party/trial/harness/build.sh x86 count frame-v0   # only eegen's objects rebuild
+# whole program through eegen: x86 check + aarch64 build (WSL, ~35 min); binaries end in -eg-TAG
+sh private/third_party/trial/harness/eg_pipeline.sh frame-ntsc02 LIST TAG
 # RAM diff by region (e.g. replay result vs a PCSX2 savestate one frame later)
 python -I scripts/diff_ram_regions.py A B private/extract/SLUS-20826/files/SLUS_208.26 --mask 0x...:0x...
 ```
