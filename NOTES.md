@@ -28,8 +28,9 @@ Phase reports live in `docs/PHASE_N.md`.
     and the disc directory is cached; then the game sleeps forever because
     PS2Recomp has no IOP→EE RPC (PHASE_3 B3). Waiting on the user: build
     that feature in the trial copy, or stop step 2 here.
-  - Step 3 (device speed) needs `g++-aarch64-linux-gnu` in WSL (user's
-    apt step) and the port-2222 SSH restarted on the device's new address.
+  - Step 3 (device speed): prerequisites met on 2026-11-02 (the
+    `aarch64-linux-gnu-g++` 15.2 cross compiler in WSL; key-login SSH on
+    192.168.1.4:2222). Not started.
   - PS2Recomp lives in `private/third_party/PS2Recomp` (commit
     `e5636981`; all trial changes in
     `private/third_party/trial/ps2recomp-trial.patch`); its output and
@@ -141,7 +142,7 @@ frozen, capture PAL S03, S05 and S06 (PHASE_1 C7).
 | Python | 3.14.0 (has `lzma`, `zlib`, `compression.zstd`) |
 | git | 2.55.0.windows.5 |
 | CMake | present (`D:\Programs\CMake`) |
-| WSL2 (since 2026-10-28) | Ubuntu 26.04.1, WSLg. GCC 15.2 native and `aarch64-linux-gnu`, qemu-user 10.2, CMake 4.2.3, Ninja 1.13.2, SDL 2.32.10, Mesa 26.0.8 (llvmpipe). Repo at `/mnt/d/Projects/anbernic/PS2Recompiler`. sudo needs the user's password |
+| WSL2 (since 2026-10-28) | Ubuntu 26.04.1, WSLg. GCC 15.2 native and `aarch64-linux-gnu` (C, and C++ since 2026-11-02), qemu-user 10.2, CMake 4.2.3, Ninja 1.13.2, SDL 2.32.10, Mesa 26.0.8 (llvmpipe). Repo at `/mnt/d/Projects/anbernic/PS2Recompiler`. sudo needs the user's password |
 | Missing on Windows | gcc / clang (MSVC exists in VS 18 but is unused), 7z, xorriso, chdman |
 | PCSX2 | 2.6.3 portable, inside the local game bundle folder |
 
@@ -280,6 +281,9 @@ frozen, capture PAL S03, S05 and S06 (PHASE_1 C7).
   `/CUT/*.HOG` cutscene archive, which looks like one stereo ADPCM stream.
   The mean is 85 kB/s, with bursts of about 0.7 MB/s at scene changes
   (PHASE_1 B2h).
+- RG40XX H CPU (`/proc/cpuinfo`): Cortex-A53 (part 0xd03), features
+  `fp asimd aes pmull sha1 sha2 crc32`, so PS2Recomp's ARM flags
+  `-march=armv8-a+fp+simd+crypto+crc` are safe. Governor `schedutil`.
 - PS2Recomp (commit `e5636981`):
   - its runtime needs no BIOS image: `PS2RomDevice` makes up `rom0:`
     with only a `ROMVER` file;
