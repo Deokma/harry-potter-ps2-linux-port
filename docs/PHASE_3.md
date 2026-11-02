@@ -708,3 +708,46 @@ interpreter, and VU0 programs are added.
 **Not done yet** (deferred by the stop): the cost model for interrupts,
 threads and IOP callbacks (adjustment 1; the vblank handler's replay state is
 built), the PCSX2 one-frame diff (adjustment 2), the IOP interpreter's share.
+
+## C4. Prototype of our own generator on the frame's hot set (2026-11-02)
+
+You chose "Prototype hot set" after C3. The new generator is `eegen/`
+(ours, in the repo; what it takes from PS2Recomp is in
+`docs/PROVENANCE.md`).
+
+**Choosing the hot set:** a sampling profile of the v4 frame on the device
+(SIGPROF on CPU time, `HARNESS_SAMPLE`, mapped with
+`scripts/sample_profile.py`). The time is spread thinly: generated code
+76.5 % in 240 functions (the hottest 3.8 %), runtime helpers the rest
+(`dispatchGuestBranch` 6.1 %, PS2Recomp's float slow paths `ps2_fmul_slow`
++ `ps2_fadd_slow` 8.4 %, the harness's skip check 2.2 %, `ps2portSlowAddr`
+1.4 %). The 45 hottest functions hold half the samples; the prototype takes
+all 240.
+
+**What eegen does** (whole functions, same C++ interface as PS2Recomp's
+output, so the two mix function by function):
+- its own R5900 decoder and control flow: basic blocks with delay slots,
+  branch-likely, jump tables (`jr` through a switch over the table's
+  targets, found in the data sections), entries into delay slots, tail
+  jumps as direct calls;
+- **guest registers in C++ locals** (low 64 bits of the GPRs, the 32 FPU
+  registers), so the host compiler allocates them to host registers. A
+  dataflow pass decides what goes back to the context: only registers that
+  may be dirty are written back before a call, syscall or return, and only
+  registers live afterwards are read again. The upper GPR halves (lq, sq,
+  movn, movz) stay in the context;
+- **direct calls** to the callee's C++ function (eegen's or PS2Recomp's);
+  only jalr and calls to addresses that are not function starts go through
+  `dispatchGuestBranch`;
+- **memory:** one compare (address below 32 MB) inline, everything else out
+  of line;
+- **FPU:** PS2Recomp's float model, but the zero result (frequent: products
+  with zero matrix elements) handled inline instead of in the out-of-line
+  slow path;
+- no per-instruction pc stores and no loop checkpoints (as v4; preemption
+  needs its own design).
+
+A function that uses an instruction eegen doesn't handle yet keeps
+PS2Recomp's code. That is 15 of the 240 hot functions (13 use VU0 macro
+instructions, 2 use 128-bit MMI); over the whole program 5,609 of 5,708
+functions translate.
