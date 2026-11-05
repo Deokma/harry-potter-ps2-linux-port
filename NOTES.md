@@ -55,9 +55,20 @@ Phase reports live in `docs/PHASE_N.md`.
     `eegen/vu0gen.py`; interpreted it would take 894 ms). Also from C6: PS2Recomp
     bugs fixed, `JR` reading the old register and macro code writing `vf0`; C4's
     exponent-255 values came from skipped VU0.
-  - **Not counted yet:** interrupt handlers, other EE threads, VU1, the renderer,
-    IOP, SPU2. Two frames from one room only. Recommended next: the street scene
-    (I01), then the rest of the EE, then VU1. **Waiting on the user (condition 3).**
+  - **Street scene done (2026-11-06, PHASE_3 C8):** the intro's street shot, where the
+    stock game drops to 20 frames/s: 6.8–7.1 M guest instructions, **38.4 and 39.7 ms
+    on the device, inside the stock game's 50 ms**, 1.2x over 33.3 ms. 96.8 % and
+    98.6 % match PCSX2 (same or within 0.1 %). PS2Recomp's `memmove` stub had been
+    56.6 % of the frame (92 ms); fixed. All four frames byte-identical across
+    generators and x86 / device.
+  - **Not counted yet:** interrupt handlers, other EE threads (a loader thread runs in
+    the street), VU1, the renderer, IOP, SPU2. Heavier scenes need the PAL savestates.
+    Recommended next: VU1 and the renderer, then the rest of the EE, then the heavier
+    scenes. **Waiting on the user (condition 3).**
+  - **Reaching the street shot:** boot the disc, Cross (Return) on the language screen,
+    castle at about 18 s, starry sky at about 24 s; Shift+F12 for slow motion; pause
+    (F11) when the OSD reads 9.99 FPS at 50 % speed. Then step and save as below.
+    States in `D:\ps2port-data\savestates\i01-street-2026-11-05\`.
   - **PCSX2 stepping that works:** System menu for load / save (slots shown with
     dates; F2 opens a selector that takes the keys), click the title bar before
     every frame-advance key (Home, bound in the clean profile), one vblank per
@@ -74,8 +85,9 @@ Phase reports live in `docs/PHASE_N.md`.
     has a timeout (`HARNESS_TIMEOUT`, 120 s). Run new stop logic on x86 with the
     whole-program list first: eegen calls directly, so table changes don't reach it.
   - **Local files without git history, changed 2026-11-05:**
-    `trial/harness/{hwmodel.inc,main.cpp,harness.h,make_harness.py,eg_pipeline.sh,frame_pipeline.sh}`,
-    PS2Recomp's `ps2_vu1_lower.cpp` (`trial/ps2recomp-vu-jr-fix.patch`).
+    `trial/harness/{hwmodel.inc,main.cpp,shim.cpp,harness.h,make_harness.py,eg_pipeline.sh,frame_pipeline.sh,eg_bisect.py}`,
+    PS2Recomp's `ps2_vu1_lower.cpp` (`trial/ps2recomp-vu-jr-fix.patch`) and `LibC.cpp`
+    (`trial/ps2recomp-libc-memmove.patch`).
   - The user's Ghidra export is in the repo root (`hp.toml`, `hp.cvs`,
     `SLUS_208.26.c`, `.gzf`; game-derived, **must not be committed**, and `hp.*`
     aren't git-ignored). 5,345 of its 5,362 functions start where ours do. The
@@ -483,6 +495,8 @@ python3 -I eegen/vu0gen.py private/third_party/trial/rec/frame-ntsc02.vu0code \
 REUSE=1 EG=1 EG_REUSE=1 sh private/third_party/trial/harness/build.sh x86 count frame-v0
 REUSE=1 EG=1 EG_REUSE=1 EG_DIR=private/third_party/trial/harness/gen_eg_fg HARNESS_DEFS=-DHARNESS_LEAN_DISPATCH \
     sh private/third_party/trial/harness/build.sh aarch64 time frame-v4
+# which saves hold a whole game frame, and the make_replay_state.py arguments for each
+python -I scripts/frame_states.py STATE.p2s STATE.p2s ...
 # an aligned frame: the state one vblank after the save (main thread still in the wait), its kernel-saved
 # registers (TCB's sp, here 0x1ffe670), vblank count satisfied, a Count that gives the elapsed time the game read
 python -I scripts/make_replay_state.py "D:/ps2port-data/savestates/next-frame-2026-11-05/slot2+1.p2s" private/third_party/trial/ctx_offsets.json \

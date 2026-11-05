@@ -1135,3 +1135,87 @@ None of these is urgent while the frame is inside its budget.
    anything else.
 2. **Time the rest of the EE:** the vblank handler, other threads.
 3. **VU1,** the largest unknown off this core.
+
+## C8. The street scene (I01): inside the stock game's 20 frames/s (2026-11-06)
+
+**Result.** The intro's street shot, where the stock game itself drops to 20
+frames/s, takes **38.4 and 39.7 ms for the main frame** on the device. That is
+inside the 50 ms the stock game takes there, with about 10 ms to spare, but 1.2x
+over 33.3 ms. So in this shot the port would match the stock game's frame rate,
+not beat it.
+
+**Device, RG40XX H at 1.416 GHz, whole program through eegen, VU0 translated, three
+runs of 20 each. The gameplay frames are repeated on this build:**
+
+| Frame | Ticks | Guest instructions | VU0 programs | Best | Median | Cycles | Host instructions (per guest) |
+|---|---|---|---|---|---|---|---|
+| Street a | 1 | **6,805,423** | 11,378 | 38.1 ms | **38.3–38.5 ms** | 54 M | 41.0 M (6.0) |
+| Street b | 2 | **7,145,301** | 11,362 | 39.2 ms | **39.6–39.7 ms** | 56 M | 42.4 M (5.9) |
+| NTSC slot 2 | 1 | 2,861,449 | 8,084 | 24.1 ms | 24.3–24.7 ms | 34 M | 19.6 M (6.9) |
+| NTSC slot 3 | 1 | 2,749,423 | 8,034 | 23.7 ms | 23.9–24.4 ms | 34 M | 19.3 M (7.0) |
+
+**Against PCSX2**, words of RAM over one game frame, from the same state:
+
+| Frame | Words PCSX2 changed | Same | Same or within 0.1 % | Far | Missed | Only the replay changed |
+|---|---|---|---|---|---|---|
+| Street a | 192,962 | 118,156 (61.2 %) | 186,882 (**96.8 %**) | 2,906 | 3,174 | 4,524 |
+| Street b | 178,940 | 111,080 (62.1 %) | 176,355 (**98.6 %**) | 2,287 | 298 | 7,707 |
+
+**How the real frame runs here:** three vblanks per frame, all three intervals with
+RAM changes (about 400, 50 and 200 pages), and game code is running at most vblanks
+instead of the idle loop. The game is in mode 9 (`0x38C194`), not gameplay's mode 2,
+but the frame function, tick loop and wait are the same ones, so the method carried
+over unchanged: `scripts/frame_states.py` finds the frames in a run of savestates
+and prints the arguments for `make_replay_state.py`.
+
+**PS2Recomp's `memmove` was most of the frame.** The first street run took 92 and
+93.6 ms, and 56.6 % of that was the native `memmove` stub (`LibC.cpp`), which took
+each byte through an address lookup into a temporary vector, then each byte through
+another lookup on the way out. It now does one host `memmove` when both ranges are
+contiguous (`trial/ps2recomp-libc-memmove.patch`). Results are unchanged, and the
+frame is 54 ms shorter. The gameplay frames barely use it.
+
+**Where street b's time goes** (SIGPROF, 401 samples over 100 frames, about ±1 %):
+eegen's code 61.9 %, of which **one function, `0x2B2030`, is 24.4 %** (about 9.7 ms);
+PS2Recomp's code 12.0 %; translated VU0 5.2 %; **VU0 interpreter 4.2 %** (1.8 ms for
+the 17 calls per frame that give up, about 105 µs each); memory copies 4.0 %;
+dispatch 2.7 %; other 10.0 %; float slow paths no samples. Stalls per frame: i-cache
+8.9 M cycles (16 %), load 4.0 M (7 %), store 1.0 M.
+
+**What was checked:** all 22,706 translated VU0 calls in the street frames match the
+interpreter. RDRAM is byte-identical across PS2Recomp's code and eegen on x86 and the
+whole program on the device, for all four frames, after the `memmove` fix.
+
+**Phase 1 agrees.** It extrapolated 6.6–14.8 M instructions and 9.8–14.8 M EE cycles
+for this shot (C3.1). At the 1.7–2.1 cycles per instruction the gameplay frame implies,
+7 M instructions is 12–15 M cycles.
+
+**What this doesn't show:**
+- **A second thread runs here,** which didn't happen at any gameplay vblank: at one
+  vblank the main thread is waiting while another thread (`sp` about `0x925350`, in
+  `0x2A3C98`, called from code that allocates and parses) is running. It looks like an
+  asset loader. Its work isn't in these numbers. By the cycle arithmetic above it can't
+  be large, but it hasn't been measured, and this margin has to cover it.
+- **This is the worst case known, not a proven worst case.** Only the NTSC intro and
+  one room have been measured. Quidditch, flying and boss fights need the PAL
+  savestates (`docs/SAVESTATES.md`).
+- **Off this core nothing is measured yet:** VU1, the renderer, IOP, SPU2. The street
+  has more vertices per second to transform than gameplay only through its long frames,
+  but 108k vertices per frame still has to go through translated VU1.
+- As in C7, it isn't byte-exact against PCSX2, and the differences aren't traced.
+
+**Options on this core,** if the margin gets tight, all estimates:
+
+| | Option | Basis | Estimate on the street frame |
+|---|---|---|---|
+| F | Look at `0x2B2030` | 24 % in one function | unknown, could be large |
+| G | Find why 17 VU0 calls per frame give up | 1.8 ms | about −1.5 ms |
+| B–E | as in C7 | | together perhaps −5 to −10 ms |
+
+**Recommendation, in this order:**
+1. **VU1 and the renderer.** The main frame now fits in every scene measured, and this
+   is what decides whether the whole game does. Phase 1's cost for VU1 was only an
+   extrapolation, and the frames here include the real display lists to test it with.
+2. **Time the rest of the EE:** the vblank handler and the loader thread, against the
+   9–10 ms left on this core.
+3. **The heavier scenes,** once there are PAL savestates.
