@@ -1199,9 +1199,8 @@ for this shot (C3.1). At the 1.7–2.1 cycles per instruction the gameplay frame
 - **This is the worst case known, not a proven worst case.** Only the NTSC intro and
   one room have been measured. Quidditch, flying and boss fights need the PAL
   savestates (`docs/SAVESTATES.md`).
-- **Off this core nothing is measured yet:** VU1, the renderer, IOP, SPU2. The street
-  has more vertices per second to transform than gameplay only through its long frames,
-  but 108k vertices per frame still has to go through translated VU1.
+- **Off this core nothing is measured yet:** VU1, the renderer, IOP, SPU2. The street's
+  108k vertices per frame (PHASE_1 B2e) still have to go through translated VU1.
 - As in C7, it isn't byte-exact against PCSX2, and the differences aren't traced.
 
 **Options on this core,** if the margin gets tight, all estimates:
@@ -1215,7 +1214,7 @@ for this shot (C3.1). At the 1.7–2.1 cycles per instruction the gameplay frame
 **Recommendation, in this order:**
 1. **VU1 and the renderer.** The main frame now fits in every scene measured, and this
    is what decides whether the whole game does. Phase 1's cost for VU1 was only an
-   extrapolation, and the frames here include the real display lists to test it with.
+   extrapolation, and these saved frames should hold real display lists to test it with.
 2. **Time the rest of the EE:** the vblank handler and the loader thread, against the
    9–10 ms left on this core.
 3. **The heavier scenes,** once there are PAL savestates.
