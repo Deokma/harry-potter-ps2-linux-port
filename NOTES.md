@@ -3,7 +3,7 @@
 Running log: decisions, open questions, commands that worked.
 Phase reports live in `docs/PHASE_N.md`.
 
-## Current state and handoff (updated 2026-11-03)
+## Current state and handoff (updated 2026-11-05)
 
 **Where we are:**
 - Phase 0 done (`docs/PHASE_0.md`).
@@ -42,11 +42,35 @@ Phase reports live in `docs/PHASE_N.md`.
     device. **Device: 61.2 ms per frame at 1.416 GHz** (62.5 ms without float
     groups; v4 was 124 ms). Still 1.8x over 30 fps and 1.22x over 20 fps for
     the main frame alone; options A–E and the recommendation (cost VU0
-    microprograms, interrupts, threads, IOP first) in C5. **Waiting on the
-    user (condition 3).**
+    microprograms, interrupts, threads, IOP first) in C5.
+  - **VU0 costed (2026-11-05, PHASE_3 C6; supersedes the frame above).** The
+    frame without VU0 was wrong: with it, 10,324,181 guest instructions (slot 3:
+    7,355,789) but **59.5 ms** on the device (slot 3: 42.3 ms). Translated VU0
+    (`eegen/vu0gen.py`) takes about 0.5 ms; PS2Recomp's interpreter would take
+    135 ms. The float slow path falls from 87,309 calls to 660: C4's
+    "exponent-255 values" came from the skipped programs. Two PS2Recomp bugs
+    fixed: `JR` reading the old register, macro code writing `vf0`. **The PCSX2
+    one-frame diff is still not done, and all checks so far compare our own
+    pieces.** Recommended next: that diff, then float checks off (option E),
+    then the rest of C1. **Waiting on the user (condition 3).**
+  - **The check for generator changes is now `HARNESS_VU0=3`:** RDRAM identical
+    to `rec/frame-ntsc02.out`, exactly 10,324,181 guest instructions. The old
+    VU0-skipped result is in `trial/rec-vu0/` and can't be reproduced.
+  - **Local files without git history, changed 2026-11-05:**
+    `trial/harness/{hwmodel.inc,main.cpp,harness.h,make_harness.py,eg_pipeline.sh,frame_pipeline.sh}`,
+    PS2Recomp's `ps2_vu1_lower.cpp` (`trial/ps2recomp-vu-jr-fix.patch`).
+  - The user's Ghidra export is in the repo root (`hp.toml`, `hp.cvs`,
+    `SLUS_208.26.c`, `.gzf`; game-derived, **must not be committed**, and `hp.*`
+    aren't git-ignored). 5,345 of its 5,362 functions start where ours do. The
+    decompile helps reading only, it has no game symbols.
   - Traps found: PS2Recomp emits nothing for a delay-slot `nop` (count
     convention); its 127 native stubs must stay native (`--native`); GCC
     fuses fmul+fadd on aarch64 unless `-ffp-contract=off`.
+  - Build traps (C6): `harness/gen/` holds one variant at a time, v0 for x86
+    objects and v3 for aarch64 ones: regenerate it before rebuilding a batch
+    (`make_harness.py`, now left at v3). The x86 `-eg` binary has the hot set
+    (225 functions), the aarch64 one the whole program. A non-EG build deletes
+    a directory's `eg_*` objects: use a copy of the directory.
   - Step 2: the PC boot reaches the game's main loop after 5 fixes (build
     flag, guest memory layout, IOP→EE RPC ~230 lines, our function map,
     `PollSema`). Frames are black: VU1 runs code that never arrived
@@ -431,4 +455,16 @@ REUSE=1 EG=1 sh private/third_party/trial/harness/build.sh x86 count frame-v0   
 sh private/third_party/trial/harness/eg_pipeline.sh frame-ntsc02 LIST TAG
 # RAM diff by region (e.g. replay result vs a PCSX2 savestate one frame later)
 python -I scripts/diff_ram_regions.py A B private/extract/SLUS-20826/files/SLUS_208.26 --mask 0x...:0x...
+# VU0 in the replay: HARNESS_VU0= 0 skipped, 1 interpreter, 2 recorded results,
+# 3 translated with interpreter fallback, 4 differential check of every call.
+# HARNESS_TIMES=1 per-iteration times, HARNESS_DUMP_OUT=FILE the result in .out format
+python3 -I eegen/vu0gen.py private/third_party/trial/rec/frame-ntsc02.vu0code \
+    private/third_party/trial/harness/gen_vu0/vu0_programs.inc --entries 0x1,0x4,0x7,0xa,0xd,0x10,0x13,0x16,0x19,0x1c,0x1f,0x22,0x25,0x28,0x2b,0x2e,0x31,0x34
+# relink after harness changes (gen/ must hold the right variant if a batch has to recompile)
+REUSE=1 EG=1 EG_REUSE=1 sh private/third_party/trial/harness/build.sh x86 count frame-v0
+REUSE=1 EG=1 EG_REUSE=1 EG_DIR=private/third_party/trial/harness/gen_eg_fg HARNESS_DEFS=-DHARNESS_LEAN_DISPATCH \
+    sh private/third_party/trial/harness/build.sh aarch64 time frame-v4
+# x86 check (from trial/rec), device run (from Git Bash)
+HARNESS_VU0=3 HARNESS_SKIP=0x2cd6a0 ../harness/build/harness-x86-count-frame-v0-eg frame-ntsc02 1
+sh scripts/harness_device_run.sh private/third_party/trial/harness/build/harness-aarch64-time-frame-v4-eg private/third_party/trial/rec/frame-ntsc02 20 1416000 -- HARNESS_SKIP=0x2cd6a0 HARNESS_PMU=1 HARNESS_VU0=3
 ```

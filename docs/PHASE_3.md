@@ -800,7 +800,9 @@ eegen's code, almost all with an exponent-255 operand (75,469) or result
 common operands are `0xFFFFFFFF`, `0x7FFFFFFF`, `0xFFFFFFF1`, `0xFFE11748`,
 often against 0: integers (-1, -15) or "max" markers in float registers,
 legal huge numbers on the PS2, NaNs on the host. A property of this game's
-data; about 6.6 ms per frame on the device.
+data; about 6.6 ms per frame on the device. **Corrected in C6: not the game's
+data but the skipped VU0 microprograms; with them running, 660 calls per frame
+and no exponent-255 operands.**
 
 **Float checks** are the biggest single cost left: compiling them out cuts
 host instructions by 31 %. On the in-order A53 each operation's check
@@ -829,6 +831,9 @@ groups re-run, 86 % of those because real inf / NaN values (the integers
 above) pass through.
 
 ## C5. Where milestone 1 stands, and the options (stop under condition 3)
+
+*C6 corrects this section: the frame measured here skipped VU0 and took wrong
+paths because of it. The corrected frame takes about 59.5 ms.*
 
 **Milestone 1, the first condition, is met:** a real gameplay frame (NTSC
 slot 2, one call of `0x2635D0`) runs on the device through our own
@@ -864,3 +869,132 @@ out (C1), the VU0 microprograms first (1,116 per frame), then the vblank
 handler (its replay state is built), DMA-end handlers, other threads and
 the IOP's share. If those add more than about 10 ms, 20 frames/s is out of
 reach too, and the options above don't change that.
+
+## C6. VU0 costed (2026-11-05): the frame was wrong without it, cost under 1 ms
+
+**Result.** With VU0 running, the frame does 21 % more guest instructions but
+takes **about 59.5 ms, not more than before (61.4 ms)**. The microprograms
+themselves, translated to native code, take about 0.5 ms. Left to PS2Recomp's
+interpreter they would take 135 ms. So VU0 passes C5's 10 ms rule, and C4's
+and C5's numbers described a frame the PS2 never runs.
+
+**Device, RG40XX H at 1.416 GHz, whole program through eegen (5,500
+functions), 20 runs each:**
+
+| Frame | VU0 | Guest instructions | Best / median | Cycles | Host instructions (per guest) | L1I misses | Branch misses |
+|---|---|---|---|---|---|---|---|
+| NTSC slot 2 | skipped (C5, wrong frame) | 8,540,728 | 60.8 / 61.4 ms | 88.0 M | 53.5 M (6.3) | 1.12 M | 0.44 M |
+| | interpreter (135.2 ms of it) | 10,324,181 | 194.1 / 195.2 ms | 278.3 M | 182.9 M | 1.59 M | 2.51 M |
+| | **translated** | **10,324,181** | **58.5 / 59.2–59.8 ms** | 85 M | 52.1 M (5.05) | 1.03 M | 0.25 M |
+| NTSC slot 3 | skipped (x86 only) | 5,844,293 | | | | | |
+| | interpreter (130.0 ms of it) | 7,355,789 | 172.4 / 173.0 ms | 245.5 M | 166.4 M | 1.42 M | 2.39 M |
+| | **translated** | **7,355,789** | **41.8 / 42.1–42.5 ms** | 60–61 M | 39.5 M (5.37) | 0.87 M | 0.19 M |
+
+Against the budget, for the main frame alone: slot 2 is 1.8x over 33.3 ms and
+1.2x over 50 ms; slot 3 is 1.27x over 33.3 ms and inside 50 ms. Still to add:
+interrupt handlers, other threads, the IOP, rendering (C1).
+
+**Where slot 2's time goes** (SIGPROF, 369 samples over 60 frames, so about
+±0.5 %): eegen's code 80.1 %, PS2Recomp's code for the 81 functions eegen
+can't translate yet 11.9 %, dispatch 2.4 %, translated VU0 0.8 %, interpreter
+fallback 0.3 %, other 4.3 %. **Float slow paths: no samples** (10.5 % in C4).
+Stalls per frame: i-cache 22.2 M cycles, load 11.8 M, store 1.0 M.
+
+**What corrects C4 and C5:**
+- **The exponent-255 floats were ours, not the game's.** C4 called them "a
+  property of this game's data". The slow path falls from 87,309 calls per
+  frame to **660**, and exponent-255 operands from 75,469 to **0**, once the
+  programs run. The values came from registers the skipped programs should
+  have written. The 6.6 ms C4 put on them is gone, which is why 21 % more guest
+  work costs no more host instructions.
+- **Option A is void.** Options B, C and D stand. **Option E changes:** with no
+  exponent-255 operands left, compiling the float checks out may not lose the
+  byte-exact reference on these frames at all. That needs measuring.
+
+**What the programs are.** Six entries run in these frames (the code is the
+same in both savestates):
+
+| Entry | Calls per frame (slot 2) | VU cycles each | What it does |
+|---|---|---|---|
+| `0x016` | 1,149 | 18 | blends two 4x4 matrices with two weights: 8 `MULx`, 4 `ADD` (looks like animation keyframes; the EE loads the two matrices, stores `vf12`–`vf15`) |
+| `0x034` | 169 | 61 | matrix products, cross products, one `DIV`: 68 operations |
+| `0x007`, `0x00a`, `0x00d`, `0x010` | 30 each | 26–28 | scale six vectors by a weight, add them to or store them in VU data: 8 stores |
+
+34,231 VU cycles per frame in all. The VU1 microcode is a different matter and
+isn't covered here.
+
+**Two bugs found on the way, both in what we took from PS2Recomp:**
+1. **`JR` / `JALR` read the old register value** (`ps2_vu1_lower.cpp`, through
+   `readBranchVi`). Every entry is a stub `IADDIU vi14, body` / `JR vi14`, so
+   each call ran the *previous* program's body whenever the entry changed. On a
+   PS2 those stubs could not work that way. Fixed in the interpreter
+   (`trial/ps2recomp-vu-jr-fix.patch`; conditional branches keep the backup).
+   Found because a translated program disagreed with the interpreter; the first
+   VU0-on figures (10,140,866 instructions) were wrong because of it.
+2. **PS2Recomp's macro code writes `vf0`.** The game waits for a microprogram
+   with `vadd.xyzw vf0, vf0, vf0`, which doubled `vf0.w` (it reached
+   `0x5C800000` in a frame). `vf0` is constant on the VU. Fixed in
+   `trial/harness/make_harness.py` (4 sites); PS2Recomp's emitter itself is
+   still unpatched. When eegen learns the macro instructions it must drop these
+   writes too. On the VU0-skipped frame this alone changes 1,332 bytes, with
+   the same instruction count, so the old reference can't be reproduced.
+
+**How VU0 is translated** (`eegen/vu0gen.py`, `eegen/eegen_vu0.h`): host vector
+code in flush-to-zero and round-toward-zero mode. Only straight-line traces
+(11 of 18 entries, including all six live ones; the other 7 need `MTIR`, `SQI`,
+partial `SQ` or `BAL` and stay with the interpreter). A program gives up without
+changing anything on an exponent-255 operand, host overflow or invalid
+operation, or a division by zero, and the interpreter takes that call: 1 call
+per frame on slot 2, 2 on slot 3 (about 0.15 ms each on the device; which
+operand causes it hasn't been looked at). MAC, status and clip flags aren't
+produced; the frame's RAM shows nothing here reads them.
+
+**Why the interpreter is so slow:** about 91,000 host instructions per program.
+Among other things it works out each result again in `long double`, which on
+aarch64 is software quad precision. It isn't an option for the port.
+
+**What was checked:**
+- every call in both frames, translated against interpreter (registers and VU
+  data, bit for bit): 2,821 calls, **0 mismatches**;
+- RAM and scratchpad identical between interpreter and translated, and between
+  PS2Recomp's code and eegen, on both frames (x86, eegen hot set);
+- on the device, whole program: **0 RDRAM bytes differ** from the x86 result, for
+  the interpreter, recorded results and translated code, on both frames;
+- `vf0.w` is 1.0 in the results where it had been stored as 2.0 and higher, and
+  a matrix at `0x3A5310` comes out as `bff59a32 3fa42b78 3f800000 3f800000`
+  against the savestate's `bff59c9e 3fa42b92 3f800000 3f800000`, one frame apart.
+
+**What this doesn't show:**
+- **The PCSX2 one-frame diff (plan adjustment 2) still hasn't been done.** All
+  the checks above compare our own pieces with each other. The savestate
+  comparison is one spot check; counting changed bytes over all of RAM doesn't
+  tell the frames apart (294,243 changed with VU0, 288,705 without).
+- Two frames from one room; the street (I01) is the game's own worst case.
+- The stand-in is still idle hardware: pad, sound RPC and the rest return
+  defaults (C1).
+
+**New reference:** `rec/frame-ntsc02.out` and `rec/frame-ntsc03.out` are now
+the corrected frames, checked with `HARNESS_VU0=3` (or 1). The old result is
+kept in `trial/rec-vu0/`. The check is no longer 8,540,728 instructions but
+**10,324,181** for slot 2 and 7,355,789 for slot 3.
+
+**Options now**, on the corrected frame. These are estimates, not measurements:
+
+| | Option | Basis | Estimate |
+|---|---|---|---|
+| B | VU0 macro instructions (and the few MMI ones) in eegen | PS2Recomp's code 11.9 % | about −3 ms |
+| C | Code layout for the A53 i-cache | i-cache stalls 26 % of cycles | −5 to −8 ms, uncertain |
+| D | Fast memory: no per-access RDRAM test | memory accesses | −2 to −3 ms |
+| E | No float checks (flush-to-zero, round-toward-zero as for VU0) | C4's no-check build: 31 % fewer host instructions; no exponent-255 operands left | up to −10 ms, possibly still byte-exact |
+
+B–D together: roughly 47–50 ms on slot 2, 34–36 ms on slot 3. With E: maybe
+38–42 ms and 27–30 ms. So 20 frames/s looks reachable for the main frame in
+this room; 30 frames/s doesn't yet, on the heavier frame.
+
+**Recommendation, in this order:**
+1. **PCSX2 one-frame diff.** Everything above rests on the replay being the
+   real frame, and now it can actually match.
+2. **Measure E,** the largest single gain and now the cheapest to try (one
+   generator switch, one build).
+3. **Cost the rest of C1:** the vblank handler, DMA-end handlers, other threads,
+   the IOP.

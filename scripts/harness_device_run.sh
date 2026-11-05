@@ -33,10 +33,11 @@ ssh $ssh_opts "$host" "mkdir -p '$dir/rec'"
 files=""
 for suffix in .in .out .vu0data .vu0code; do
     [ -f "$rec$suffix" ] || continue
-    size=$(wc -c < "$rec$suffix")
+    # by content: a new reference has the same size as the old one
+    sum=$(md5sum < "$rec$suffix" | cut -d' ' -f1)
     # shellcheck disable=SC2086
-    remote=$(ssh $ssh_opts "$host" "wc -c < '$dir/rec/$name$suffix' 2>/dev/null || echo 0")
-    [ "$remote" = "$size" ] || files="$files $rec$suffix"
+    remote=$(ssh $ssh_opts "$host" "md5sum < '$dir/rec/$name$suffix' 2>/dev/null | cut -d' ' -f1")
+    [ "$remote" = "$sum" ] || files="$files $rec$suffix"
 done
 # shellcheck disable=SC2086
 [ -z "$files" ] || scp $scp_opts $files "$host:$dir/rec/"
