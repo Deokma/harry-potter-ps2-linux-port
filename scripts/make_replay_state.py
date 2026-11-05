@@ -60,17 +60,30 @@ def main(argv=None):
                     help="CP0 Count the replay reads. The game's clock is Count: "
                          "left at 0 it looks like a huge time jump and the game runs "
                          "its maximum catch-up ticks (PHASE_3 C7)")
+    ap.add_argument("--from-block", type=lambda v: int(v, 0), default=None,
+                    help="resume a waiting thread: address of the context the PS2 "
+                         "kernel saved for it (its TCB's stack pointer): 32 GPRs of "
+                         "16 bytes, then 32 FPU registers. Replaces --sp, --gp, ra.")
+    ap.add_argument("--poke", action="append", default=[],
+                    help="ADDR=VALUE, a 32-bit word of RAM to change first")
     args = ap.parse_args(argv)
 
     off = json.loads(args.offsets.read_text())
     z = zipfile.ZipFile(args.state)
-    ram = z.read("eeMemory.bin")
+    ram = bytearray(z.read("eeMemory.bin"))
     spr = z.read("Scratchpad.bin")
     assert len(ram) == 32 << 20 and len(spr) == 16 << 10
     vf, vi = vu0_registers(z.read("PCSX2 Internal Structures.dat"))
+    for item in args.poke:
+        addr, value = item.split("=")
+        struct.pack_into("<I", ram, int(addr, 0), int(value, 0))
 
     ctx = bytearray(off["size"])
     regs = {"gp": args.gp, "sp": args.sp, "ra": 0}
+    if args.from_block is not None:
+        regs = {}
+        ctx[off["r"] + 16:off["r"] + 512] = ram[args.from_block + 16:args.from_block + 512]
+        ctx[off["f"]:off["f"] + 128] = ram[args.from_block + 512:args.from_block + 640]
     for item in args.reg:
         name, value = item.split("=")
         regs[name] = int(value, 0)

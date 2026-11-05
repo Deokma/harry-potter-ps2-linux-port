@@ -43,32 +43,36 @@ Phase reports live in `docs/PHASE_N.md`.
     groups; v4 was 124 ms). Still 1.8x over 30 fps and 1.22x over 20 fps for
     the main frame alone; options A–E and the recommendation (cost VU0
     microprograms, interrupts, threads, IOP first) in C5.
-  - **VU0 costed (2026-11-05, PHASE_3 C6; supersedes the frame above).** The
-    frame without VU0 was wrong: with it, 10,324,181 guest instructions (slot 3:
-    7,355,789) but **59.5 ms** on the device (slot 3: 42.3 ms). Translated VU0
-    (`eegen/vu0gen.py`) takes about 0.5 ms; PS2Recomp's interpreter would take
-    135 ms. The float slow path falls from 87,309 calls to 660: C4's
-    "exponent-255 values" came from the skipped programs. Two PS2Recomp bugs
-    fixed: `JR` reading the old register, macro code writing `vf0`. **The PCSX2
-    one-frame diff is still not done, and all checks so far compare our own
-    pieces.** Recommended next: that diff, then float checks off (option E),
-    then the rest of C1. **Waiting on the user (condition 3).**
-  - **PCSX2 diff (2026-11-05, in progress; supersedes the numbers above).** The
-    replay never set CP0 Count, the game's clock, so the game saw a huge time
-    jump and ran its maximum 11 catch-up ticks in one frame. With the Count the
-    real frame read (from the next savestate, `make_replay_state.py --count`):
-    **3,286,591 guest instructions and 24.7 ms on the device (slot 2), 2,410,669
-    and 20.4 ms (slot 3): inside 33.3 ms for the main frame alone.** RAM doesn't
-    match PCSX2 yet: the replay runs render, wait, update; the real frame from
-    the savestate runs update, render, wait.
+  - **PCSX2 diff done (2026-11-05, PHASE_3 C7; replaces all frame numbers above,
+    C2 to C6 measured a frame the game never runs).** True frame: **2,861,449
+    guest instructions, 24.5 ms on the device (slot 2); 2,749,423, 24.1 ms (slot
+    3): inside 33.3 ms for the main frame alone.** Against PCSX2, 94.9 % and 99.4 %
+    of the words it changes come out the same or within 0.1 %; not byte-exact, the
+    rest isn't traced. What was wrong: CP0 Count unset (game ran 11 catch-up ticks,
+    real frame runs 1), wrong order (replay now resumes the main thread from its
+    kernel-saved context and stops at the next wait), scratchpad DMA not copied,
+    8,084 VU0 programs per frame not 1,288 (vertex skinning, translated:
+    `eegen/vu0gen.py`; interpreted it would take 894 ms). Also from C6: PS2Recomp
+    bugs fixed, `JR` reading the old register and macro code writing `vf0`; C4's
+    exponent-255 values came from skipped VU0.
+  - **Not counted yet:** interrupt handlers, other EE threads, VU1, the renderer,
+    IOP, SPU2. Two frames from one room only. Recommended next: the street scene
+    (I01), then the rest of the EE, then VU1. **Waiting on the user (condition 3).**
   - **PCSX2 stepping that works:** System menu for load / save (slots shown with
-    dates), click the title bar before each frame-advance key (Home, bound in the
-    clean profile), one vblank per press, screen doesn't redraw while paused. From
-    a state PCSX2 repeats itself byte for byte. Saved: slot 2 +1, +2, +4, +5 in
-    slots 6, 7, 4, 5; slot 3 +1, +2, +3 in slots 8, 9, 10.
-  - **The check for generator changes is now `HARNESS_VU0=3`:** RDRAM identical
-    to `rec/frame-ntsc02.out`, exactly 3,286,591 guest instructions. Older
-    results are in `trial/rec-vu0/` and can't be reproduced.
+    dates; F2 opens a selector that takes the keys), click the title bar before
+    every frame-advance key (Home, bound in the clean profile), one vblank per
+    press, the screen doesn't redraw while paused. From a state PCSX2 repeats itself
+    byte for byte. The EE's registers and the kernel's thread table can be read from
+    the save (`cpuRegs`; TCBs at `0x1A698`, 0x4C each). States kept in
+    `D:\ps2port-data\savestates\next-frame-2026-11-05\`.
+  - **The check for generator changes:** `HARNESS_SKIP=0x2cd6a0
+    HARNESS_STOP_TIMER=2 HARNESS_VU0=3` on `frame-ntsc02r`: RDRAM identical to
+    `rec/frame-ntsc02r.out`, exactly 2,861,449 guest instructions. Older results
+    are in `trial/rec-vu0/` and can't be reproduced.
+  - **Trap, device:** a replay that never ends can take the device down (it
+    rebooted once on 2026-11-05, cause not established). `harness_device_run.sh` now
+    has a timeout (`HARNESS_TIMEOUT`, 120 s). Run new stop logic on x86 with the
+    whole-program list first: eegen calls directly, so table changes don't reach it.
   - **Local files without git history, changed 2026-11-05:**
     `trial/harness/{hwmodel.inc,main.cpp,harness.h,make_harness.py,eg_pipeline.sh,frame_pipeline.sh}`,
     PS2Recomp's `ps2_vu1_lower.cpp` (`trial/ps2recomp-vu-jr-fix.patch`).
@@ -165,7 +169,9 @@ frozen, capture PAL S03, S05 and S06 (PHASE_1 C7).
   `D:\ps2port-data\savestates\backup-2026-10-27\`.
 - The clean profile uses the bundle's SCPH-50004 EUR BIOS. Whether it is a
   dump of the user's own console is still unconfirmed.
-- Screen-control mechanics (PCSX2 opens on monitor "P24FBA-RAGL"):
+- Screen-control mechanics (PCSX2 opens on the second monitor, "LG TV" on
+  2026-11-05, so `switch_display` first; call `open_application` once only, a
+  second call starts a second instance):
   - **While the VM runs, mouse clicks on PCSX2 windows (menus, Settings)
     are ignored.** Pause with F11 first. Hotkeys still work.
   - **Pad keys need a hold of ≥ 0.2 s.** A bare key tap can be missed by
@@ -477,7 +483,13 @@ python3 -I eegen/vu0gen.py private/third_party/trial/rec/frame-ntsc02.vu0code \
 REUSE=1 EG=1 EG_REUSE=1 sh private/third_party/trial/harness/build.sh x86 count frame-v0
 REUSE=1 EG=1 EG_REUSE=1 EG_DIR=private/third_party/trial/harness/gen_eg_fg HARNESS_DEFS=-DHARNESS_LEAN_DISPATCH \
     sh private/third_party/trial/harness/build.sh aarch64 time frame-v4
-# x86 check (from trial/rec), device run (from Git Bash)
-HARNESS_VU0=3 HARNESS_SKIP=0x2cd6a0 ../harness/build/harness-x86-count-frame-v0-eg frame-ntsc02 1
-sh scripts/harness_device_run.sh private/third_party/trial/harness/build/harness-aarch64-time-frame-v4-eg private/third_party/trial/rec/frame-ntsc02 20 1416000 -- HARNESS_SKIP=0x2cd6a0 HARNESS_PMU=1 HARNESS_VU0=3
+# an aligned frame: the state one vblank after the save (main thread still in the wait), its kernel-saved
+# registers (TCB's sp, here 0x1ffe670), vblank count satisfied, a Count that gives the elapsed time the game read
+python -I scripts/make_replay_state.py "D:/ps2port-data/savestates/next-frame-2026-11-05/slot2+1.p2s" private/third_party/trial/ctx_offsets.json \
+    private/third_party/trial/rec/frame-ntsc02r --pc 0x2cd6f0 --sp 0 --gp 0 --from-block 0x1ffe670 --poke 0x328490=2 --count 268444254
+# x86 check (from trial/rec), device run (from Git Bash); HARNESS_DMA_LOG=1 lists DMA kicks
+HARNESS_SKIP=0x2cd6a0 HARNESS_STOP_TIMER=2 HARNESS_VU0=3 ../harness/build/harness-x86-count-frame-v0-eg frame-ntsc02r 1
+sh scripts/harness_device_run.sh private/third_party/trial/harness/build/harness-aarch64-time-frame-v4-eg private/third_party/trial/rec/frame-ntsc02r 20 1416000 -- HARNESS_SKIP=0x2cd6a0 HARNESS_STOP_TIMER=2 HARNESS_PMU=1 HARNESS_VU0=3
+# against PCSX2: start, replay, the state one game frame later
+python -I scripts/frame_diff.py private/third_party/trial/rec/frame-ntsc02r.in private/third_party/trial/rec/frame-ntsc02r.out "D:/ps2port-data/savestates/next-frame-2026-11-05/slot2+2.p2s" private/extract/SLUS-20826/files/SLUS_208.26
 ```

@@ -5,10 +5,10 @@
 
 VU0CODE is a dump of VU0 micro memory (game data, stays in private/), and so
 is OUT.inc, which the replay harness includes. An entry is translated only
-if its trace from the entry point is straight-line (taken branches and a
-jump through a register holding a known constant are followed) and uses the
-instructions below; anything else is refused with the reason and stays with
-the interpreter.
+if its trace from the entry point is simple: unconditional branches, BAL and a
+jump through a register holding a known constant are followed, conditional
+branches may only skip forward, and it uses the instructions below; anything
+else is refused with the reason and stays with the interpreter.
 
 Semantics follow PS2Recomp's VU interpreter so that the two can be compared
 byte for byte (HARNESS_VU0=4); see eegen/eegen_vu0.h for how the host float
@@ -42,9 +42,13 @@ class Program:
         self.pending = []    # (register, dest) written by the current pair
         self.inputs = {}     # register -> lanes read before being defined
         self.written = set()
+        self.raw = set()     # registers read only as bits
         self.vi_inputs = set()
         self.vi_defined = set()
         self.vi_written = set()
+        self.vi_written_at = {}
+        self.flags = []      # conditional branch results
+        self.cond = None     # (target, flag) of the branch in the current pair
         self.q_input = False
         self.q_defined = False
         self.q_at = None
@@ -63,12 +67,24 @@ class Program:
             self.inputs.setdefault(reg, set()).update(missing)
         return reg
 
+    def read_raw(self, reg):
+        """A register read as bits (integers in a float register: never normalized)."""
+        if reg == "vf0":
+            return "eg_vf0"
+        self.raw.add(reg)
+        return reg
+
     def read_vi(self, n):
         if n == 0:
             return "0"
         if n not in self.vi_defined:
             self.vi_inputs.add(n)
         return f"vi{n}"
+
+    def write_vi(self, n, pair):
+        self.vi_defined.add(n)
+        self.vi_written.add(n)
+        self.vi_written_at[n] = pair
 
     def read_q(self, pair):
         if self.q_at is None:
@@ -105,6 +121,8 @@ class Program:
                 return None
             if k == 0x2E:
                 return self.opmula(fs, ft, dest)
+            if 0x10 <= k <= 0x17:
+                return self.convert(k, ft, fs, dest)
             kinds = {0x00: "add", 0x04: "sub", 0x08: "madd", 0x0C: "msub", 0x18: "mul"}
             vecs = {0x28: "add", 0x29: "madd", 0x2A: "mul", 0x2C: "sub", 0x2D: "msub"}
             qs = {0x1C: "mul", 0x20: "add", 0x21: "madd", 0x24: "sub", 0x25: "msub"}
@@ -149,6 +167,25 @@ class Program:
         sym = "+" if kind == "madd" else "-"
         stmt = f"const eg_v4 {name} = {acc} {sym} {s} * {whole_t};"
         return stmt, self.assign(target, name, dest)
+
+    def convert(self, k, ft, fs, dest):
+        """ITOF0/4/12/15, FTOI0/4/12/15. The scales are powers of two, so scaling
+        is exact and only overflow is left, which gives up (invalid flag)."""
+        if ft == 0:
+            return None
+        self.ops += 1
+        scale = (1, 16, 4096, 32768)[k & 3]
+        name = self.new_temp()
+        if k < 0x14:
+            s = self.read_raw(f"vf{fs}")
+            value = f"__builtin_convertvector((eg_vi4){s}, eg_v4)"
+            if scale != 1:
+                value += f" * (1.0f / {scale}.0f)"
+            return f"const eg_v4 {name} = {value};", self.assign(f"vf{ft}", name, dest)
+        s = self.read(f"vf{fs}", lanes_of(dest))
+        value = f"{s} * {scale}.0f" if scale != 1 else s
+        stmt = f"const eg_v4 {name} = (eg_v4)__builtin_convertvector({value}, eg_vi4);"
+        return stmt, self.assign(f"vf{ft}", name, dest)
 
     def opmula(self, fs, ft, dest):
         if dest & 1:
@@ -201,8 +238,7 @@ class Program:
                 if vit == 0:
                     return None, None, None
                 value = self.read_vi(vis)
-                self.vi_defined.add(vit)
-                self.vi_written.add(vit)
+                self.write_vi(vit, pair)
                 self.vi_const.pop(vit, None)
                 name = self.new_temp()
                 return (f"const int16_t {name} = (int16_t)({value} + {imm});",
@@ -214,8 +250,7 @@ class Program:
             if vit == 0:
                 return None, None, None
             value = self.read_vi(vis)
-            self.vi_defined.add(vit)
-            self.vi_written.add(vit)
+            self.write_vi(vit, pair)
             if vis in self.vi_const:
                 self.vi_const[vit] = self.vi_const[vis] + imm
             else:
@@ -255,6 +290,34 @@ class Program:
             imm = l & 0x7FF
             imm = imm - 0x800 if imm & 0x400 else imm
             return None, None, pc + 1 + imm
+        if op == 0x21:  # BAL: the link is a constant, followed like the jump back
+            imm = l & 0x7FF
+            imm = imm - 0x800 if imm & 0x400 else imm
+            vit = l >> 16 & 15
+            commit = None
+            if vit:
+                self.write_vi(vit, pair)
+                self.vi_const[vit] = pc + 2
+                commit = f"vi{vit} = (int16_t){pc + 2};"
+            return None, commit, pc + 1 + imm
+        if op in (0x28, 0x29, 0x2C, 0x2D, 0x2E, 0x2F):  # IBEQ IBNE IBLTZ IBGTZ IBLEZ IBGEZ
+            imm = l & 0x7FF
+            imm = imm - 0x800 if imm & 0x400 else imm
+            if imm <= 0:
+                raise Refuse("backward conditional branch")
+            vit, vis = l >> 16 & 15, l >> 11 & 15
+            used = (vit, vis) if op < 0x2C else (vis,)
+            for r in used:
+                # a branch right after a write sees the old value: not modelled
+                if self.vi_written_at.get(r) == pair - 1:
+                    raise Refuse("conditional branch on a register written just before")
+            a = self.read_vi(vis)
+            test = {0x2C: "<", 0x2D: ">", 0x2E: "<=", 0x2F: ">="}.get(op)
+            cond = f"{a} {test} 0" if test else f"{a} {'==' if op == 0x28 else '!='} {self.read_vi(vit)}"
+            flag = f"c{len(self.flags)}"
+            self.flags.append(flag)
+            self.cond = (pc + 1 + imm, flag)
+            return f"{flag} = {cond};", None, None
         if op == 0x24:  # JR
             vis = l >> 11 & 15
             if vis not in self.vi_const:
@@ -265,6 +328,16 @@ class Program:
     def lower_special(self, l, pair):
         k = (l >> 6 & 31) << 2 | l & 3
         dest, vft, vfs = l >> 21 & 0xF, l >> 16 & 31, l >> 11 & 31
+        if k == 0x3C:  # MTIR: the low 16 bits of one lane, as bits
+            vit = l >> 16 & 15
+            if vit == 0:
+                return None, None, None
+            s = self.read_raw(f"vf{vfs}")
+            self.write_vi(vit, pair)
+            self.vi_const.pop(vit, None)
+            name = self.new_temp()
+            return (f"const int16_t {name} = (int16_t)((eg_vi4){s})[{l >> 21 & 3}];",
+                    f"vi{vit} = {name};", None)
         if k == 0x30:  # MOVE (not normalized)
             if dest == 0 or vft == 0:
                 return None, None, None
@@ -298,19 +371,31 @@ def translate(code, entry):
     pending = None
     last = False
     pair = 0
+    cond = None    # a conditional branch waiting for its delay slot
+    joins = {}     # target -> states of the branches that go there
     while True:
         if pair > 400 or pc * 8 + 8 > len(code):
             raise Refuse("runs off the end")
+        if pc in joins:
+            # only what every way in has defined counts as defined
+            p.body.append(f"L{pc:03x}:;")
+            for defined, vi_defined, vi_const in joins.pop(pc):
+                p.defined = {r: p.defined.get(r, set()) & defined.get(r, set()) for r in p.defined}
+                p.vi_defined &= vi_defined
+                p.vi_const = {r: v for r, v in p.vi_const.items() if vi_const.get(r) == v}
         l, u = struct.unpack_from("<II", code, pc * 8)
         ebit = u >> 30 & 1
         if u >> 31 & 1:
             raise Refuse("I bit (LOI)")
         res_u = p.upper(u & ~(1 << 30), pair)
         stmt_l, commit_l, target = p.lower(l, pair, pc)
-        if target is not None and (pending is not None or ebit or last):
+        branching = target is not None or p.cond is not None
+        if branching and (pending is not None or cond is not None or ebit or last):
             raise Refuse("branch in a delay slot")
         # both halves of a pair read the registers as they were before it;
-        # the lower instruction's write comes last
+        # the lower instruction's write comes last. Braces: a goto may not
+        # jump over the temporaries' initialization.
+        p.body.append("{")
         if res_u:
             p.body.append(res_u[0])
         if stmt_l:
@@ -319,9 +404,18 @@ def translate(code, entry):
             p.body.append(res_u[1])
         if commit_l:
             p.body.append(commit_l)
+        p.body.append("}")
         for reg, dest in p.pending:
             p.defined.setdefault(reg, set()).update(lanes_of(dest))
         p.pending.clear()
+        if cond is not None:
+            where, flag = cond
+            cond = None
+            p.body.append(f"if ({flag}) goto L{where:03x};")
+            joins.setdefault(where, []).append((
+                {r: set(s) for r, s in p.defined.items()}, set(p.vi_defined), dict(p.vi_const)))
+        if p.cond is not None:
+            cond, p.cond = p.cond, None
         pair += 1
         p.pairs += 1
         next_pc = pc + 1
@@ -334,8 +428,12 @@ def translate(code, entry):
         if ebit:
             last = True
         pc = next_pc
+    if joins:
+        raise Refuse("a branch goes past the program's end")
     if p.q_at is not None and pair - p.q_at < 7:
         raise Refuse("division still running when the program ends")
+    if p.flags and (p.stores or p.q_at is not None):
+        raise Refuse("stores or a division alongside conditional branches")
     return p
 
 
@@ -344,7 +442,9 @@ def emit(p):
     out = [f"// entry {p.entry:#05x}: {p.pairs} pairs, {p.ops} operations, {p.stores} stores"]
     out.append(f"__attribute__((noipa)) static bool eg_vu0_body_{tag}(const R5900Context *ctx, const uint8_t *data, EgVu0Out &o)")
     out.append("{")
-    regs = sorted({r for r in p.inputs} | p.written, key=lambda r: (r == "acc", int(r[2:]) if r != "acc" else 0))
+    regs = sorted(set(p.inputs) | p.written | p.raw, key=lambda r: (r == "acc", int(r[2:]) if r != "acc" else 0))
+    if p.flags:
+        out.append("    bool " + ", ".join(p.flags) + ";")
     for r in regs:
         src = "ctx->vu0_acc" if r == "acc" else f"ctx->vu0_vf[{r[2:]}]"
         out.append(f"    eg_v4 {r}; std::memcpy(&{r}, &{src}, 16);")

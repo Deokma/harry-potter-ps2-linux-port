@@ -55,7 +55,7 @@ echo performance > \$cpu/scaling_governor
 echo $khz > \$cpu/scaling_max_freq
 sleep 1
 echo \"clock \$(cat \$cpu/scaling_cur_freq) kHz (governor \$(cat \$cpu/scaling_governor))\"
-env $envs ./$(basename "$harness") rec/$name $iters || echo \"harness exit \$?\"
+timeout ${HARNESS_TIMEOUT:-120} env $envs ./$(basename "$harness") rec/$name $iters || echo \"harness exit \$?\"
 echo \"clock after \$(cat \$cpu/scaling_cur_freq) kHz\"
 echo \$old_max > \$cpu/scaling_max_freq
 echo \$old_gov > \$cpu/scaling_governor

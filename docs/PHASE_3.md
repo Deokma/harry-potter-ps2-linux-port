@@ -872,6 +872,10 @@ reach too, and the options above don't change that.
 
 ## C6. VU0 costed (2026-11-05): the frame was wrong without it, cost under 1 ms
 
+*C7 corrects this section: the frame here was still wrong, and its 59.5 ms
+isn't the game's. Its findings on `JR`, `vf0` and the exponent-255 values stand;
+the live programs and their cost are in C7.*
+
 **Result.** With VU0 running, the frame does 21 % more guest instructions but
 takes **about 59.5 ms, not more than before (61.4 ms)**. The microprograms
 themselves, translated to native code, take about 0.5 ms. Left to PS2Recomp's
@@ -1001,3 +1005,133 @@ yet, on the heavier frame.
    generator switch, one build).
 3. **Cost the rest of C1:** the vblank handler, DMA-end handlers, other threads,
    the IOP.
+
+## C7. The PCSX2 diff (2026-11-05): the real frame fits in 33.3 ms
+
+**Result.** Plan adjustment 2 is done, and it overturns the numbers before it.
+Checked against PCSX2, the gameplay frame is **under 3 M guest instructions, not
+10 M**, and takes **about 24.5 ms on the device, inside the 33.3 ms budget for
+30 frames/s**, for the main frame alone. C2 to C6 measured a frame the game
+never runs.
+
+**Device, RG40XX H at 1.416 GHz, whole program through eegen, VU0 translated,
+three runs of 20 each:**
+
+| Frame | Guest instructions | Best | Median | Cycles | Host instructions (per guest) | L1I misses | Branch misses |
+|---|---|---|---|---|---|---|---|
+| NTSC slot 2 | **2,861,449** | 24.2 ms | **24.3–24.8 ms** | 34.5 M | 19.6 M (6.9) | 0.59 M | 0.13 M |
+| NTSC slot 3 | **2,749,423** | 23.8 ms | **23.9–24.3 ms** | 34 M | 19.3 M (7.0) | 0.58 M | 0.13 M |
+
+That is about 74 % of the 33.3 ms budget, leaving about 9 ms on that core.
+
+**Against PCSX2,** words of RAM over one game frame, from the same state:
+
+| Frame | Words PCSX2 changed | Same | Same or within 0.1 % | Far | Missed | Only the replay changed |
+|---|---|---|---|---|---|---|
+| Slot 2 | 110,470 | 76,148 (68.9 %) | 104,857 (**94.9 %**) | 5,381 | 232 | 6,390 |
+| Slot 3 | 115,088 | 83,403 (72.5 %) | 114,404 (**99.4 %**) | 393 | 291 | 4,422 |
+
+For scale, before the fixes below, slot 2 had 3,442 words the same and 51,555
+missed. PCSX2 itself repeats exactly from a state: two runs gave identical RAM,
+so these differences are not noise.
+
+**How the real frame runs** (savestates one vblank apart, `pc` and cycle count
+from the save): the game runs at 30 frames/s, two vblanks per frame. All the
+frame's RAM changes fall in one of the two intervals (about 480 pages against 7
+in the other), inside 4.92 M EE cycles, and the EE is in the kernel's idle loop
+at every vblank. 2.86 M instructions fits that. 10 M never could; PCSX2 charges
+at least 1.1 cycles per instruction, so at most about 4.4 M fit.
+
+**What was wrong with the replay, in the order found:**
+1. **The clock.** `make_replay_state.py` left CP0 Count at 0, and Count is the
+   game's clock (`FUN_002f2050`). Against the saved time base that looked like a
+   huge jump, so the fixed-timestep loop (25 ticks/s, `FUN_00251610`) ran its
+   maximum of 11 simulation ticks in one frame. The real frame runs one. That
+   alone took slot 2 from 10.3 M to 3.3 M instructions. The Count to use comes
+   from the next savestate: the blend factor the game stored (`0x3A506C`) gives
+   the elapsed time it read.
+2. **The order.** The savestate parks the main thread in the vsync wait, inside
+   the frame function. The real frame is the rest of that call (kick the display
+   list, read the clock, one tick), then the next call up to the same wait. The
+   replay called the frame function from the top, which rendered the old frame
+   again. It now resumes from the context the PS2 kernel saved for the thread
+   (thread table at `0x1A698`; 32 GPRs and 32 FPU registers below its stack
+   pointer), from the state one vblank on, and stops at the next wait.
+3. **Scratchpad DMA.** The stand-in marked DMA finished without copying. The
+   frame moves about 420 KB between scratchpad and RAM (114 transfers), which the
+   game then reads back. Copying them took missed words from 39,571 to 232.
+4. **VU0 programs.** With those fixed, the frame runs **8,084 programs**, not
+   1,288: entries `0x001` and `0x004` run 3,313 times each. They are vertex
+   skinning (up to four bone matrices, picked by indices in `vf4`, position and
+   normal blended by weight). `vu0gen.py` now handles them (forward branches,
+   `BAL`, `MTIR`, `ITOF`, `FTOI`): 13 of 18 entries, all eight live ones. They
+   take 5.7 % of the frame (about 1.4 ms), and the interpreter 0.5–0.7 ms for the
+   4–6 calls per frame that give up. Interpreted, VU0 would take **894 ms per
+   frame**.
+
+`gp` was also wrong in the replay (`0x3A7570`; every thread has `0x367570`). It
+changed nothing: the game has no `gp`-relative loads or stores.
+
+**Where slot 2's time goes** (SIGPROF, 247 samples over 100 frames, about ±1 %):
+eegen's code 52.0 %, **PS2Recomp's code for the functions eegen can't translate
+yet 28.7 %** (the VU0 macro functions, led by `0x2C4FE0`, `0x2CFA30`,
+`0x2C4CF8`), translated VU0 5.7 %, dispatch 2.4 %, interpreter fallback 0.8 %,
+other 9.7 %, float slow paths no samples. Stalls per frame: i-cache 9.5 M cycles
+(28 %), load 5.1 M (15 %), store 0.4 M. The stand-in's own per-access bookkeeping
+(8 % of the frame) is compiled out of timing builds.
+
+**What was checked:**
+- every VU0 call in both frames, translated against interpreter: 16,108 calls,
+  **0 mismatches**;
+- PS2Recomp's code with the interpreter against eegen's hot set with translated
+  VU0, x86: **0 RDRAM bytes differ**, same instruction count, both frames;
+- whole program on the device against that reference: **0 RDRAM bytes differ**,
+  both frames. (`v0` doesn't match on the device: eegen keeps registers in locals
+  and the run leaves through the stop, so the context isn't current. RAM is the
+  check.)
+
+**What this doesn't show:**
+- **It isn't byte-exact against PCSX2.** 28,709 and 31,001 words are close but not
+  the same, and only about 60 % of those are within 16 units in the last place, so
+  this isn't simply a rounding mode. 5,381 words on slot 2 are further off. Neither
+  has been traced. Likely places to look: PS2Recomp's float model against PCSX2's,
+  the stand-in's fixed Count (real reads differ within a frame) and pad state.
+- **The frame's other work isn't counted:** vblank and DMA-end handlers, other EE
+  threads and IOP callbacks share this core. In the odd vblank interval only 163
+  bytes of RAM change, so the handlers look small, but they haven't been timed.
+- **The other cores aren't counted:** VU1, the renderer, IOP and SPU2. VU1 is the
+  largest unknown left.
+- **Two frames from one room.** The stock game drops to 20 frames/s in the street
+  (I01), and that scene hasn't been measured.
+
+**New reference.** `rec/frame-ntsc02r` and `frame-ntsc03r` are the aligned frames:
+`.in` from the state one vblank on, `.out` from PS2Recomp's code with the
+interpreter. The check for generator changes is `HARNESS_SKIP=0x2cd6a0
+HARNESS_STOP_TIMER=2 HARNESS_VU0=3`: RDRAM identical, exactly **2,861,449**
+instructions on slot 2. The states from PCSX2 are in
+`D:\ps2port-data\savestates\next-frame-2026-11-05\`.
+
+**An incident.** The device rebooted once, during a run of the first version of the
+stop. That version relied on a dispatched call of the wait, but eegen's
+whole-program build calls that code directly with the wait compiled out, so the
+replay never stopped. Why that led to a reboot isn't established; it hasn't
+happened since. The stop now hangs on the timer write after the wait, which every
+build goes through, and `harness_device_run.sh` has a 120 s timeout.
+
+**Options now**, all estimates:
+
+| | Option | Basis | Estimate |
+|---|---|---|---|
+| B | VU0 macro instructions (and the few MMI ones) in eegen | PS2Recomp's code 28.7 % | −2 to −4 ms |
+| C | Code layout for the A53 i-cache | i-cache stalls 28 % of cycles | −2 to −3 ms, uncertain |
+| D | Direct scratchpad and RAM access | about 28,000 scratchpad accesses per frame take the slow path | −1 to −2 ms |
+| E | No float checks | no exponent-255 operands; C4's measurement was on the wrong frame | unknown, needs a build |
+
+None of these is urgent while the frame is inside its budget.
+
+**Recommendation, in this order:**
+1. **The street scene (I01),** the game's own worst case. This whole procedure now
+   takes minutes per scene, and if the EE doesn't fit there, that decides more than
+   anything else.
+2. **Time the rest of the EE:** the vblank handler, other threads.
+3. **VU1,** the largest unknown off this core.
