@@ -56,6 +56,10 @@ def main(argv=None):
     ap.add_argument("--gp", type=lambda v: int(v, 0), required=True)
     ap.add_argument("--reg", action="append", default=[],
                     help="NAME=VALUE, e.g. a0=0x1234 (64-bit, low half)")
+    ap.add_argument("--count", type=lambda v: int(v, 0), default=0,
+                    help="CP0 Count the replay reads. The game's clock is Count: "
+                         "left at 0 it looks like a huge time jump and the game runs "
+                         "its maximum catch-up ticks (PHASE_3 C7)")
     args = ap.parse_args(argv)
 
     off = json.loads(args.offsets.read_text())
@@ -74,6 +78,8 @@ def main(argv=None):
         struct.pack_into("<Q", ctx, off["r"] + 16 * REG_NAMES.index(name),
                          value & 0xFFFFFFFFFFFFFFFF)
     struct.pack_into("<I", ctx, off["pc"], args.pc)
+    # cop0_count, cop0_entryhi, cop0_compare, cop0_status in R5900Context
+    struct.pack_into("<I", ctx, off["cop0_status"] - 12, args.count)
     ctx[off["vu0_vf"]:off["vu0_vf"] + 512] = vf
     for k, value in enumerate(vi):
         struct.pack_into("<H", ctx, off["vi"] + 2 * k, value)

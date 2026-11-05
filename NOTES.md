@@ -53,9 +53,22 @@ Phase reports live in `docs/PHASE_N.md`.
     one-frame diff is still not done, and all checks so far compare our own
     pieces.** Recommended next: that diff, then float checks off (option E),
     then the rest of C1. **Waiting on the user (condition 3).**
+  - **PCSX2 diff (2026-11-05, in progress; supersedes the numbers above).** The
+    replay never set CP0 Count, the game's clock, so the game saw a huge time
+    jump and ran its maximum 11 catch-up ticks in one frame. With the Count the
+    real frame read (from the next savestate, `make_replay_state.py --count`):
+    **3,286,591 guest instructions and 24.7 ms on the device (slot 2), 2,410,669
+    and 20.4 ms (slot 3): inside 33.3 ms for the main frame alone.** RAM doesn't
+    match PCSX2 yet: the replay runs render, wait, update; the real frame from
+    the savestate runs update, render, wait.
+  - **PCSX2 stepping that works:** System menu for load / save (slots shown with
+    dates), click the title bar before each frame-advance key (Home, bound in the
+    clean profile), one vblank per press, screen doesn't redraw while paused. From
+    a state PCSX2 repeats itself byte for byte. Saved: slot 2 +1, +2, +4, +5 in
+    slots 6, 7, 4, 5; slot 3 +1, +2, +3 in slots 8, 9, 10.
   - **The check for generator changes is now `HARNESS_VU0=3`:** RDRAM identical
-    to `rec/frame-ntsc02.out`, exactly 10,324,181 guest instructions. The old
-    VU0-skipped result is in `trial/rec-vu0/` and can't be reproduced.
+    to `rec/frame-ntsc02.out`, exactly 3,286,591 guest instructions. Older
+    results are in `trial/rec-vu0/` and can't be reproduced.
   - **Local files without git history, changed 2026-11-05:**
     `trial/harness/{hwmodel.inc,main.cpp,harness.h,make_harness.py,eg_pipeline.sh,frame_pipeline.sh}`,
     PS2Recomp's `ps2_vu1_lower.cpp` (`trial/ps2recomp-vu-jr-fix.patch`).
