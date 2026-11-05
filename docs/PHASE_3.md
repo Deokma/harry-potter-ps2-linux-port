@@ -959,7 +959,8 @@ aarch64 is software quad precision. It isn't an option for the port.
 - RAM and scratchpad identical between interpreter and translated, and between
   PS2Recomp's code and eegen, on both frames (x86, eegen hot set);
 - on the device, whole program: **0 RDRAM bytes differ** from the x86 result, for
-  the interpreter, recorded results and translated code, on both frames;
+  the interpreter and translated code on both frames, and for recorded results
+  on slot 2;
 - `vf0.w` is 1.0 in the results where it had been stored as 2.0 and higher, and
   a matrix at `0x3A5310` comes out as `bff59a32 3fa42b78 3f800000 3f800000`
   against the savestate's `bff59c9e 3fa42b92 3f800000 3f800000`, one frame apart.
@@ -987,9 +988,11 @@ kept in `trial/rec-vu0/`. The check is no longer 8,540,728 instructions but
 | D | Fast memory: no per-access RDRAM test | memory accesses | −2 to −3 ms |
 | E | No float checks (flush-to-zero, round-toward-zero as for VU0) | C4's no-check build: 31 % fewer host instructions; no exponent-255 operands left | up to −10 ms, possibly still byte-exact |
 
-B–D together: roughly 47–50 ms on slot 2, 34–36 ms on slot 3. With E: maybe
-38–42 ms and 27–30 ms. So 20 frames/s looks reachable for the main frame in
-this room; 30 frames/s doesn't yet, on the heavier frame.
+B–D together: roughly 46–50 ms on slot 2, 32–35 ms on slot 3 (the same shares
+of a smaller frame). With all of E: about 36–40 ms and 25–28 ms. C4's no-check
+figure was measured on the wrong frame, so E is the least certain. So 20
+frames/s looks reachable for the main frame in this room; 30 frames/s doesn't
+yet, on the heavier frame.
 
 **Recommendation, in this order:**
 1. **PCSX2 one-frame diff.** Everything above rests on the replay being the
