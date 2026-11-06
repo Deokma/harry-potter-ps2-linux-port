@@ -45,19 +45,19 @@ done
 scp $scp_opts "$harness" "$host:$dir/"
 
 # shellcheck disable=SC2086
-ssh $ssh_opts "$host" "
+ssh $ssh_opts "$host" "cat > '$dir/device_guard.sh'" < "$here/device_guard.sh"
+status=0
+# device_guard.sh: pinned clock, time limit, 85 C limit (exit 3)
+# shellcheck disable=SC2086
+ssh $ssh_opts -o ServerAliveInterval=5 -o ServerAliveCountMax=3 "$host" "
 cd '$dir'
 ${BENCH_PRE:-:} >/dev/null 2>&1 || true
 sleep 2
-cpu=/sys/devices/system/cpu/cpu0/cpufreq
-old_gov=\$(cat \$cpu/scaling_governor); old_max=\$(cat \$cpu/scaling_max_freq)
-echo performance > \$cpu/scaling_governor
-echo $khz > \$cpu/scaling_max_freq
-sleep 1
-echo \"clock \$(cat \$cpu/scaling_cur_freq) kHz (governor \$(cat \$cpu/scaling_governor))\"
-timeout ${HARNESS_TIMEOUT:-120} env $envs ./$(basename "$harness") rec/$name $iters || echo \"harness exit \$?\"
-echo \"clock after \$(cat \$cpu/scaling_cur_freq) kHz\"
-echo \$old_max > \$cpu/scaling_max_freq
-echo \$old_gov > \$cpu/scaling_governor
+sh device_guard.sh $khz ${HARNESS_TIMEOUT:-120} -- env $envs ./$(basename "$harness") rec/$name $iters
+rc=\$?
+[ \$rc = 0 ] || echo \"harness exit \$rc\"
 ${BENCH_POST:-:}
-"
+exit \$rc
+" || status=$?
+[ "$status" = 255 ] && echo "DEVICE LOST: the connection dropped (reboot?)"
+exit "$status"

@@ -46,8 +46,8 @@ Keep tool output short.
   its generated code in `trial/out-b/`.
 - `trial/rec/frame-{ntsc02r,ntsc03r,i01a,i01b}.{in,out,vu0code,vu0data}`: checked frames.
 - `private/extract/SLUS-20826/files/`: disc files, 1.7 GB (`RESOURCE`, `MOVIES`, IRXs, ELF).
-- `private/ghidra/` (`hp.cvs`, `hp.toml`); `SLUS_208.26.c` and `.gzf` in the repo root are
-  git-ignored. The decompile has no game symbols but is good for reading control flow.
+- `private/ghidra/` (`hp.cvs`, `hp.toml`, `SLUS_208.26.c`, `SLUS_208.26.gzf`). The decompile
+  has no game symbols but is good for reading control flow.
 - `D:\ps2port-data\`: `snapshots/{F01,I01,N01,N02,N03,PILOT}` GS dumps (F01 has the menu),
   `savestates/` (slots 1–3 are the user's; `next-frame-2026-11-05/`,
   `i01-street-2026-11-05/` are ours), `pcsx2-clean/`.
