@@ -11,7 +11,7 @@ Phase reports live in `docs/PHASE_N.md`.
 **Goal now (user, 2026-11-06):** a thin slice to the title screen on the RG40XX H with
 real GLES picture, audio and input stubbed, no gameplay. No more scene measuring. Plan and
 milestones M1–M5: `docs/PHASE_4.md` (approved; results and revised estimates at its end).
-**M1 is not finished: see "Next" at the end of this section.**
+**M1 is done on the PC; see "Next" at the end of this section.**
 
 **Rules that changed:** stop only if (a) a measured main frame exceeds its budget (50 ms in
 the street, 33.3 ms elsewhere), (b) a decision from the user is needed, or (c) the device
@@ -32,9 +32,9 @@ Keep tool output short.
   | `frame-i01b` (street, 2 ticks) | 7,145,301 | 39.7 ms | 50 ms | 98.6 % |
 
 - PC boot on PS2Recomp's runtime (x86 in WSL, software GS, not the device) shows the
-  language screen from about 4 s. With movies stubbed, CROSS leads on to the WB logo, the loading screen and the opening cutscene, which stops on its first subtitle. The menu has not been reached.
+  language screen from about 4 s. With movies stubbed, the boot goes on through the WB logo, the loading screen and the opening cutscene to the main menu.
 - PS2Recomp bugs fixed so far: `JR` / `JALR` old register, macro code writing `vf0`,
-  byte-at-a-time `memmove`, the pad stub's ID in pressure mode (`0x79`), CP0 `Count` that never advanced, IOP `sceCdGetReadPos`, the IOP allocator never reusing freed memory, a hole in the function map at `0x2600e8`. Replay stand-in now has a real clock (CP0 Count) and scratchpad
+  byte-at-a-time `memmove`, the pad stub's ID in pressure mode (`0x79`), CP0 `Count` that never advanced, IOP `sceCdGetReadPos`, the IOP allocator never reusing freed memory, holes in the function map (`0x2600e8`, `0x1af300` and others). Replay stand-in now has a real clock (CP0 Count) and scratchpad
   DMA, and resumes the main thread from its kernel-saved registers.
 
 **Not in git (`private/`, `D:\ps2port-data\`):**
@@ -45,8 +45,7 @@ Keep tool output short.
   `ps2recomp-count-emitter.patch`, `ps2recomp-iop.patch`, `ps2recomp-m1-runtime.patch` (the whole diff of the runtime files against that commit, so it
   already holds the trial patch's hunks for those files; it passes `git apply --cached --check`);
   its generated code in `trial/out-b/`.
-- `trial/boot-20261106-161825/`: the language-screen boot (`frames/`, `log.txt`), the PC
-  reference picture so far.
+- `trial/reference/`: PC reference pictures and GIF logs (`menu.png`, `language.png`, `menu-gif.log`); `trial/boot-*/`: each boot's frames and logs.
 - `trial/rec/frame-{ntsc02r,ntsc03r,i01a,i01b}.{in,out,vu0code,vu0data}`: checked frames.
 - `private/extract/SLUS-20826/files/`: disc files, 1.7 GB (`RESOURCE`, `MOVIES`, IRXs, ELF).
 - `private/ghidra/` (`hp.cvs`, `hp.toml`, `SLUS_208.26.c`, `SLUS_208.26.gzf`). The decompile
@@ -106,19 +105,16 @@ More commands at the end of this file ("Commands that worked").
   upload from the VIF1 interrupt handler (`0x2D3398`), which the runtime never ran. It now
   runs in place when a flagged VIFcode completes. Details in `docs/PHASE_4.md`.
 
-**Next: finish M1, then M3 (it needs no runtime), M2, M4, M5.** M1 is at about 215 calls and not
-finished. **Any further M1 limit is the user's to set; if their first message gives none, ask.**
-Revised estimates for M2-M5 are in `docs/PHASE_4.md`. To keep calls down: read a file once in a larger
-piece, apply several edits from one script, use `build-fast`. Still to do in M1:
-1. The opening cutscene stops on its first subtitle and the pad doesn't skip it. Find what its
-   timeline waits on (audio position through `0x301b10`, `sceSdRemote`, is a guess), or get to the
-   menu around it. Details: `docs/PHASE_4.md`, "M1 continued: from the first movie read".
-2. Then the menu: PNG, `gif.log`, and which path draws it.
+**Next: M3 (GS to GLES on the device, from the saved dumps; it needs no runtime), then M2, M4, M5.** M1
+is done on the PC at about 255 calls: `docs/PHASE_4.md`, "M1 result". Keep calls down: read a file once in a
+larger piece, apply several edits from one script, use `build-fast`. Nothing has run on the device since the
+thread spike, so M3 is the first new device measurement.
 
-Carry into M2: eegen's handling of `Count` must match `ps2portReadCount`; its native list must cover
-the `scePad*` stubs in `trial/config_b.toml` and the movie stub's functions; its function list needs
-`0x2600e8`. None of that is done. GIF logs differ between boots of one build (`docs/PHASE_4.md`),
-which bears on M2's done-when. Reference pictures so far: `trial/boot-20261106-192722/frames/`.
+To see the menu again, from the repo root in WSL:
+```
+PS2PORT_GS_DRAW_WINDOW=3/9 PS2PORT_RUNNER=$PWD/private/third_party/build-fast/ps2xRuntime/ps2EntryRunner PS2PORT_STATS=1 sh scripts/ps2recomp_trial.sh boot 130 "CROSS@5+0.3,START@40+3"
+```
+Reference pictures and logs: `trial/reference/`. Carry into M2: `docs/PHASE_4.md`, "Carry into M2".
 
 ## History (older state; where it differs, the section above wins)
 

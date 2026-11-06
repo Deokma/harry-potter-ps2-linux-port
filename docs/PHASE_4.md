@@ -222,8 +222,7 @@ here ran on the device. Frames are sampled about every 2 s and compared by hash.
 
 **Movies are stubbed (`scripts/ps2recomp_movie_stub.py`).** The play-movie function (`0x2dc178`) is a
 blocking loop: decode, draw a full-screen quad, call an optional callback, flip. `frontend.thp` plays
-with callback `0x1af300`, which looks like the menu; that is from reading the code, since the menu has
-not been seen. So the loop stays and only the work under it goes: video setup, audio setup and both
+with callback `0x1af300`, which runs the menu. So the loop stays and only the work under it goes: video setup, audio setup and both
 teardowns do nothing, and decode reports "ended" for a movie with no callback and "still playing" for
 one with a callback. The movie picture is left out, as the plan allows.
 
@@ -241,21 +240,81 @@ so all along (`[guest-branch:missing-target]`). With a table entry the loading b
 that one call stopped the loading screen was not worked out. It is the only missing target in these
 boots, but other gaps could show up on code paths not yet run.
 
-**Still open: the cutscene stops on its first subtitle.** After `CUT\HPM01.HOG` the screen is black
-for about a minute, then a dim subtitle, a brighter one, and then no change for at least 118 s, with
-the main thread still flipping and PATH1 traffic going on (about 50 packets a second). START and CROSS
-don't skip it. A timeline driven by audio position, which the stubbed sound would never advance, would
-fit, but this has not been checked. Other than that, the only pictures so far are the ones named here.
+**The cutscene looked stopped on its first subtitle; it was not (see "M1 result").**
 
 Traffic in `boot-20261106-192722`: PATH1 14,196 packets, 15.0 MB; PATH3 738 packets, 80.8 MB. Most of
-the PATH3 bytes come before the cutscene. **Still missing from M1's done-when:** a menu PNG, its GIF
-log, and which path draws the menu.
+the PATH3 bytes come before the cutscene. 
 
 **Build.** `private/third_party/build-fast/`, `-O1` without LTO: 11.5 min for a full compile, then
 about 70 s per change instead of 12 min. `build-runtime/` is now out of date. PC boot timings from
 `build-fast` say even less about the device than before.
 
+# M1 result: the main menu on the PC (2026-11-06)
+
+**M1's done-when is met on the PC: PNGs of the language screen and menu, a GIF packet log, and which
+path draws the menu.** This is x86 in WSL with the software GS, a `-O1` build without LTO, and
+rasterizing limited to 3 s of each 9 s. Nothing here ran on the device, the picture has not been
+compared with PCSX2 pixel by pixel, and movies are stubbed, so the menu is over black as planned.
+
+Boot `boot-20261106-204702`:
+
+```
+PS2PORT_GS_DRAW_WINDOW=3/9 PS2PORT_RUNNER=$PWD/private/third_party/build-fast/ps2xRuntime/ps2EntryRunner PS2PORT_STATS=1 sh scripts/ps2recomp_trial.sh boot 130 "CROSS@5+0.3,START@40+3"
+```
+
+Language screen, WB logo, loading screen, opening cutscene, then a held START skips to the menu, which
+stays from about 47 s to about 77 s. The game's 30 s idle timeout then moves on (`PS_TRAIL.PSS`, stubbed;
+not followed further). In `boot-20261106-204340`, a held CROSS on the menu loaded `RESOURCE\DAY\DAY0.HOG`
+and `CUT\HPM02.HOG`, with the loading bar at about half when the run ended, so New Game starts loading.
+Saved in `trial/reference/` (not in git): `menu.png`, `language.png`, `menu-gif.log`,
+`language-to-cutscene-gif.log`.
+
+**Which path draws the menu.** Over 24 s of it (per second only, since the game's frame rate in this run
+was not measured):
+
+| | Packets a second | Traffic | Packet size, median and largest |
+|---|---|---|---|
+| PATH1 (VU1 `XGKICK`) | 961 | 797 KB/s | 304 and 2,320 bytes |
+| PATH2 | 0 | 0 | |
+| PATH3 (GIF DMA) | 54.5 | 4.77 MB/s | 131,408 and 132,304 bytes |
+
+Of 24,895 packets, 407 hashes are distinct. So the menu's geometry goes through VU1, and PATH3 carries
+texture uploads that keep going at about 5 MB/s even here. M3's texture path has to take that cheaply, and
+the menu does depend on VU1 (M4 was not skippable anyway).
+
+**Corrections to the section above.** The cutscene never stopped on its first subtitle. It was crawling:
+with everything rasterized the game's frame counter gained about 0.45 a second where it should gain 25,
+because the software GS takes all the time and the game waits for it. The buttons seemed ignored because a
+short press fell between frames, and the audio-position guess was wrong. Tick values move in steps of 11,
+which fits the frame limiter catching up by up to about 10 ticks a frame: about 24 s per rendered frame with
+all drawing, about 2 s without. What takes the 2 s was not profiled; the VU1 interpreter in a `-O1` build
+is the likely part. None of these PC speeds says anything about the device, which won't use this renderer
+or this interpreter.
+
+**More fixes.**
+- `PS2PORT_GS_DRAW_WINDOW=ON/PERIOD` skips rasterizing outside short windows, PC only. Packets, register
+  state and image uploads are unaffected.
+- Holes in the function map, again: the menu callback `0x1af300` lies inside `FUN_001aefb0`. An unlisted
+  entry point needs a label, a re-entry `case` and a table entry (`scripts/ps2recomp_gen_fixes.py`): a table
+  entry alone enters at the function's top and runs the wrong code. A general scan-back fallback was tried
+  and removed for that reason. Listed so far: `0x1af300`, `0x126428`, `0x2a3180`, `0x2fff98`, `0x3020e8`,
+  `0x3021a0`, plus `0x2600e8`. A new one shows in a log as `[guest-branch:missing-target]`, and the game
+  carries on without that call, so it is easy to miss.
+- The movie stub's first version read the callback from a line that never ran, because the re-entry switch
+  has a case for the function's own entry. It now reads `s5`, where `0x2dc178` keeps it.
+
+**Carry into M2.** eegen has no re-entry labels, so its function list must split at all the addresses
+above, and its native list must cover the `scePad*` stubs and the movie stub's functions. `Count` must match
+`ps2portReadCount`. `STREAM.IRX` still runs in the emulated IOP for every file read, at a cost on the device
+that nobody has measured; a native file layer over the game's own (`0x2d3f60` and its neighbours) is the
+alternative. Scripted presses must outlast a frame. GIF logs differ between boots, so M2's comparison has to
+be by hash set or with a fixed clock. Not decided.
+
 ## Revised estimate for M2–M5
+
+M1 finished at about 255 tool calls against a plan of 40-70, about four times over; the table below
+only doubled the plan. Much of that went on bugs M2 won't meet again, but if M2-M5 overrun as M1 did, the
+total is nearer 600-1,080 than 300-540. That is scaling too, not a fresh analysis of each milestone.
 
 M1 used about 115 tool calls and isn't finished (about 20–40 more), against a plan of 40–70.
 The revised column doubles the plan. That is simple scaling, not a fresh analysis of each
