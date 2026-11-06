@@ -142,40 +142,62 @@ The gameplay chain has no DIRECT and 54 interrupt-flagged NOPs, each after a MAR
 # M1 continued (2026-11-06, second session)
 
 Measured on the PC only: x86 in WSL, the runtime's software GS. Nothing here ran on the device.
-Boots of 120 s, CROSS pressed every 5 s from 5 s after the first pad read; the last column of
-the "before" run used 60 s and presses from 15 s.
+Boots of 120 or 150 s, CROSS every 5 s from 5 s after the first pad read (the first row: 60 s,
+presses from 15 s).
 
-| | Before (60 s) | Pad ID fixed | Pad ID fixed, Count runs |
+| Boot | Change | GIF packets | Where it ends |
 |---|---|---|---|
-| Language screen | never left | until 8.6 s, black from 10.8 s | until 8.4 s, black from 10.6 s |
-| GIF packets | 19,331 | 2,212 | 2,429 |
-| GIF bytes | about 305 MB | 34.3 MB | 37.7 MB |
-| Main thread at exit | | pc `0x29bd40` | pc `0x29bd40` |
+| `161825` | before | 19,331 | language screen, never left |
+| `164914` | pad ID | 2,212 | wait at `0x29bd38`, black from about 10 s |
+| `171129`, `171626` | `Count` edited in `trial/out-b/` only, **not compiled** | 2,429, 2,336 | same wait |
+| `174738` | `Count` in `src/runner/` | 2,496 | spin at `0x2d5288`, black from about 10 s |
+| `180859` | + `sceCdGetReadPos` | 2,527 | same spin |
 
 **Pad, fixed.** The game's poll (`0x2ccc50`) drops the pad unless the ID byte is `0x79` once it
 has asked for pressure mode (`0x2f7e50`). The stub always answered `0x73`. It now answers `0x79`
 in pressure mode. That CROSS is what leaves the screen rests on this before and after; the fixed
 build was not run without presses.
 
-**The stall after the language screen, not fixed.** The main thread sits in `0x29bd38`-`0x29bd4c`
-(55 of 59 samples at `0x29bd40`), a busy-wait with no syscall:
-`do { v = stopwatch(*0x395730); } while (v - s3 < 501);`. The stopwatch (`0x2f1f58`) adds the
-change in a clock (`0x2f2050`, built on CP0 `Count` read at `0x2f2040`) and divides the total by
-the first field of its struct.
+**CP0 Count, fixed.** Nothing in the runtime advanced `cop0_count` (7 reads in 4 generated
+functions, no writes). It now reads a host clock at 294.912 MHz (`ps2portReadCount`). The game's
+stopwatch (`0x2f1f58`) is built on it at 250 units a second (`DAT_00327360`), so the wait at
+`0x29bd38` is 2 s, inside the memory card check (`0x29baa0`, states 6, 7, `0x16`). **The first
+attempt patched `trial/out-b/`, but the runtime builds from `ps2xRuntime/src/runner/`, a copy. So
+`171129` and `171626` still had a frozen Count, and the earlier note here that the fix was "not
+enough" was wrong.** With Count running the wait ends and the game goes past the card check.
 
-**CP0 Count, a real bug, fixed, and not enough.** Nothing in the runtime advanced `cop0_count`
-(7 reads in 4 generated functions, no writes). It now reads a host clock at 294.912 MHz
-(`ps2portReadCount`, in the 4 generated files and in PS2Recomp's emitter). **The wait still did
-not end within the run.** The cause is not established. Not checked: the divisor at the start of
-the struct at `DAT_00395730`, its pause flag at +0x18, `s3`, the vblank callback `0x2f20d0`. If the
-divisor were per second rather than per millisecond the wait would be 501 s, longer than the run;
-that is a guess to test, not a finding.
+**Now: a spin in what looks like the movie player's first read, not solved.** The main thread sits
+in `0x2d5288`, `while (DAT_003a7824 < DAT_003a7838)` (68 of 73 samples), called from `0x2dd8e0`,
+which sets up IPU DMA. Calling it the movie player comes from reading the code; no movie has
+played. The counter is blocks read: `0x2d3830`, a completion callback registered through
+`0x2f58a8`, increments it (+0x14 of the stream struct at `0x3a7810`). `0x2d4c88` opens the file and
+asks for the first read through `0x2f2af8(0x7e, ...)`. `STREAM.IRX`, the game's real driver, runs in
+the emulated IOP.
+
+`STREAM.IRX` imported `cdvdman:44` (`sceCdGetReadPos`; the ordinal is from memory of the
+open-source cdvdman's import table), which was unhandled and returned 0. It now returns the whole
+size of the last read, since reads here finish at once. The warning is gone and **the spin
+remains**, so that was not the cause, or not all of it. The spin has a scheduler checkpoint
+(`eeCheckpointDue`), so it should not starve other guest threads by itself. Cause not established.
+
+Traced boot (`boot-20261106-181311`, 60 s, `PS2PORT_IOP_TRACE=1`, same build, ends at pc=0x2d5298): 66 `sceCdRead`, 4 `sceCdGetReadPos`, 88 `callEeRpc` (sids: 0x12344321). The trace caps at 400 CD lines and 200 EE lines, so counts at those values are floors. Its last lines:
+
+```
+[iop-trace] sceCdRead lsn=449778 sectors=16 buf=0x1d1880 ra=0x4f538
+[iop-trace] callEeRpc sid=0x12344321
+[iop-trace] callEeRpc sid=0x12344321
+[iop-trace] sceCdRead lsn=115582 sectors=16 buf=0x1d9880 ra=0x4f538
+[iop-trace] callEeRpc sid=0x12344321
+[iop-trace] callEeRpc sid=0x12344321
+```
+Not checked: whether `0x2d3830` ever runs, what it gets from `0x2f5b18`, and whether the request
+from `0x2f2af8` reaches `STREAM.IRX` over RPC `0x12345`.
 
 **GIF packet log.** `PS2PORT_GIF_LOG=FILE` (the boot script sets it to `gif.log`): one line per
 packet with path, bytes and FNV-1a 64 of its contents; the line number is the sequence. A masked
 PATH3 packet appears twice. In `boot-20261106-171129` it has 2,429 lines (PATH1 2,119, PATH3 310)
 and 37,749,184 bytes, matching the runtime's own `gifpkts` and `gifbytes`. It covers the language
-screen only, and has no frame markers. A repeat boot of the same build with the same pad script differs: 2,429 and 2,336 packets, the first 1,753 identical, 99 of 99 distinct hashes shared. So M2's done-when ("same GIF packet hashes as M1") can't be read as an identical log while the clock is a host clock. M2 needs either a fixed-step clock for its comparison runs or a looser comparison such as matching hash sets. Not decided.
+screen only, and has no frame markers. A repeat boot of the same build with the same pad script differs: 2,429 and 2,336 packets, the first 1,753 identical, 99 of 99 distinct hashes shared. So M2's done-when ("same GIF packet hashes as M1") can't be read as an identical log. Those two boots had Count frozen, so the variation comes from elsewhere (host-timed vblanks are the likely source, not checked), and a running Count can only add to it. M2 needs either a fixed-step clock for its comparison runs or a looser comparison such as matching hash sets. Not decided.
 
 Still missing from M1's done-when: a menu PNG, its GIF log, and which path draws the menu.
 
@@ -184,7 +206,7 @@ Other notes: in these boots the frame sampled at 2 s is black at 512x447, not th
 sources moved to `harness/`; generator check after the move: 0 RDRAM bytes differ, 2,861,449
 instructions. `scripts/rpc_binds.py` lists a game's RPC binds and callers.
 
-Calls: this session used its limit of 40, so M1 stands at about 155.
+Calls: limits of 40 and a self-set 20 are both used, so M1 stands at about 175.
 
 ## Revised estimate for M2–M5
 

@@ -32,9 +32,9 @@ Keep tool output short.
   | `frame-i01b` (street, 2 ticks) | 7,145,301 | 39.7 ms | 50 ms | 98.6 % |
 
 - PC boot on PS2Recomp's runtime (x86 in WSL, software GS, not the device) shows the
-  language screen from about 4 s. CROSS now leaves it, then the game stalls in a wait at `0x29bd38`.
+  language screen from about 4 s. CROSS now leaves it, the card check runs, then the game spins in what looks like the movie player's first read (`0x2d5288`).
 - PS2Recomp bugs fixed so far: `JR` / `JALR` old register, macro code writing `vf0`,
-  byte-at-a-time `memmove`, the pad stub's ID in pressure mode (`0x79`), CP0 `Count` that never advanced. Replay stand-in now has a real clock (CP0 Count) and scratchpad
+  byte-at-a-time `memmove`, the pad stub's ID in pressure mode (`0x79`), CP0 `Count` that never advanced, IOP `sceCdGetReadPos`. Replay stand-in now has a real clock (CP0 Count) and scratchpad
   DMA, and resumes the main thread from its kernel-saved registers.
 
 **Not in git (`private/`, `D:\ps2port-data\`):**
@@ -42,7 +42,7 @@ Keep tool output short.
   (whole program), `gen_vu0/`, `build/`. Its sources are in `harness/`, in git.
 - `private/third_party/PS2Recomp/` (commit `e5636981`), changes in
   `trial/ps2recomp-trial.patch`, `ps2recomp-vu-jr-fix.patch`, `ps2recomp-libc-memmove.patch`,
-  `ps2recomp-count-emitter.patch`, `ps2recomp-m1-runtime.patch` (the whole diff of the runtime files against that commit, so it
+  `ps2recomp-count-emitter.patch`, `ps2recomp-iop.patch`, `ps2recomp-m1-runtime.patch` (the whole diff of the runtime files against that commit, so it
   already holds the trial patch's hunks for those files; it passes `git apply --cached --check`);
   its generated code in `trial/out-b/`.
 - `trial/boot-20261106-161825/`: the language-screen boot (`frames/`, `log.txt`), the PC
@@ -84,6 +84,8 @@ More commands at the end of this file ("Commands that worked").
   program. Test stop logic against whole-program behaviour: eegen calls directly, so table
   changes don't reach it. That caused the one device reboot (cause not fully established).
 - PS2Recomp-only builds need `HARNESS_SKIP=0x2cd6a0`, or the vsync wait spins forever.
+- The runtime builds from `ps2xRuntime/src/runner/`, a copy of `trial/out-b/`. Edit both, or a fix to generated code
+  is never compiled. One such edit cost a 12 min link and a wrong conclusion.
 - A full rebuild is about 35–45 min; run long builds in the background.
 - `scripts/ps2recomp_trial.sh boot` works only in WSL. From Git Bash it exits 126 after 0 s.
 
@@ -97,23 +99,23 @@ More commands at the end of this file ("Commands that worked").
   upload from the VIF1 interrupt handler (`0x2D3398`), which the runtime never ran. It now
   runs in place when a flagged VIFcode completes. Details in `docs/PHASE_4.md`.
 
-**Next: finish M1, then M3 (it needs no runtime), M2, M4, M5.** M1 used this session's limit of
-40 calls (about 155 in all) and is not finished. **Any further M1 limit is the user's to set; if
-their first message gives none, ask.** Revised estimates for M2-M5 are in `docs/PHASE_4.md`. To
-keep calls down: read a file once in a larger piece, apply several edits from one script. A
-runtime rebuild is dominated by the LTO link, about 12 min, so run it in the background and batch
-changes. Still to do in M1:
-1. Why the wait at `0x29bd38` doesn't end now that `Count` runs. Log the struct at `DAT_00395730`
-   (divisor, last, total, pause flag at +0x18) and `s3` at exit, or read how the divisor is set
-   (`0x2f1fc0`, `0x2f21c8`). If the divisor is per second the wait is 501 s; a 600 s boot would
-   show it. Details in `docs/PHASE_4.md`, "M1 continued".
-2. Then the menu: PNG, `gif.log`, and which path draws it. The language screen's log exists
-   (`trial/boot-20261106-171129/gif.log`).
+**Next: finish M1, then M3 (it needs no runtime), M2, M4, M5.** M1 is at about 175 calls and not
+finished; the user's limit of 40 and a self-set 20 are both used. **Any further M1 limit is the
+user's to set; if their first message gives none, ask.** Revised estimates for M2-M5 are in
+`docs/PHASE_4.md`. To keep calls down: read a file once in a larger piece, apply several edits from
+one script. A runtime rebuild is dominated by the LTO link, about 12 min, so run it in the background
+and batch changes. Still to do in M1:
+1. The spin at `0x2d5288`: the movie player's first read never completes. Details and the trace are
+   in `docs/PHASE_4.md`, "M1 continued". `PS2PORT_IOP_TRACE=1` needs no rebuild. Follow the request
+   from `0x2f2af8` over RPC `0x12345` into `STREAM.IRX`, and whether the callback `0x2d3830` runs.
+2. Movies may then need the IPU, or a way around them: the slice shows the menu over black, with
+   movie decode left for later. That may be the next stop.
+3. Then the menu: PNG, `gif.log`, and which path draws it. The language screen's log exists
+   (`trial/boot-20261106-180859/gif.log`).
 
 Carry into M2: eegen's handling of `Count` must match `ps2portReadCount`, and its native list must
-cover the `scePad*` stubs in `trial/config_b.toml`; neither was checked. The GIF log changes
-between boots of one build if the repeat result in `docs/PHASE_4.md` says so, which bears on M2's
-done-when.
+cover the `scePad*` stubs in `trial/config_b.toml`; neither was checked. GIF logs differ between
+boots of one build (`docs/PHASE_4.md`), which bears on M2's done-when.
 
 ## History (older state; where it differs, the section above wins)
 
