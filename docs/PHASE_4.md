@@ -1,4 +1,38 @@
-# Phase 4: title screen on the device (plan, awaiting approval)
+# Phase 4: title screen on the device
+
+**Approved by the user on 2026-11-06, with changes:** thread spike first (done, below); M3
+before or alongside M2, with renderer cost per dump and temperature; **M4 is not skippable**,
+and before M5 VU1 is costed from the saved street and gameplay frames (instructions per
+vertex, host cost on a separate core, measured vs estimated); stop and report if M1 passes 90
+tool calls; after M1, a revised estimate of tool calls and tokens for M2–M5.
+
+## Thread spike (done, 2026-11-06)
+
+**Question:** can eegen's code run several guest threads, given PS2Recomp's way of switching
+(unwinding the host stack) can't work with its direct calls and registers in locals?
+**Answer: yes, unchanged,** with one host stack and one `R5900Context` per guest thread.
+`tests/thread_spike/`: an assembled toy R5900 program (no game data) through the real eegen.
+
+| | x86 | Device, 1.416 GHz |
+|---|---|---|
+| 3 threads round-robin from 5 nested calls, stack canaries, float sums | pass | pass |
+| With 1 kHz timer interrupts running guest handler code at any instruction, a high-priority thread woken from them, and a thread spinning on RAM with no syscall | pass | pass, about 1,500 interrupts per run |
+| Bare `swapcontext` | 235 ns | **about 850 ns** |
+| Switch with the toy's work | 380 ns | **about 1.6 µs** |
+
+Peak temperature 65.4 C. In the replayed frames semaphores are mostly uncontended, so real
+switches should be few; 100 per frame would cost about 0.17 ms.
+
+**Carried into the real kernel:** a preempted thread resumes before other ready threads of its
+priority (the toy lost log entries until this was right). A guest interrupt handler sets its own
+FPU mode (Linux resets it in a signal handler on x86). VU0 is one unit, so its state follows
+the switch. Interrupts arriving in kernel code wait until it exits.
+
+**Not shown:** this toy kernel isn't the real one; native stubs need the same interrupt
+protection as kernel calls; the spin loop not being optimised away is one small loop, on GCC at
+`-O2`, and should be looked at again if the real game hangs in a RAM loop.
+
+# Plan
 
 **Goal:** a thin end-to-end slice. Boot to the title screen on the RG40XX H with real
 picture output (GLES), audio and input stubbed, no gameplay. No more scene measuring.

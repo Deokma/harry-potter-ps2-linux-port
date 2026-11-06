@@ -77,10 +77,17 @@ More commands at the end of this file ("Commands that worked").
 - PS2Recomp-only builds need `HARNESS_SKIP=0x2cd6a0`, or the vsync wait spins forever.
 - A full rebuild is about 35–45 min; run long builds in the background.
 
+**Status log (Phase 4, plan approved 2026-11-06):**
+- Hygiene done: Ghidra files in `private/ghidra/`; `git ls-files` audited, no game code or
+  assets (docs hold addresses and a few values). **Every device run goes through
+  `scripts/device_guard.sh`** (85 C, time limit, exit 3 on a thermal stop); `scripts/device_run.sh`
+  runs any binary that way, `-g` stops the frontend for the display.
+- Thread spike: **pass on x86 and device**, results in `docs/PHASE_4.md`.
+
 **Next: M1** (`docs/PHASE_4.md`): first move our harness sources into the repo (no game data
 in them, update `docs/PROVENANCE.md`), then the PC boot from `scripts/ps2recomp_trial.sh`
-and `trial/ps2recomp-trial.patch`, then stop 6. Also from M2 on, `harness_device_run.sh`
-must log temperature and stop over 85 C (not done yet).
+and `trial/ps2recomp-trial.patch`, then stop 6. **M1 budget: stop and report past 90 tool
+calls.** After M1, give a revised estimate of tool calls and tokens for M2–M5.
 
 ## History (older state; where it differs, the section above wins)
 
