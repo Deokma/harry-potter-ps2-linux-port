@@ -12,6 +12,10 @@
 #include "gsplay_gl.h"
 #endif
 
+#include <signal.h>
+#include <sys/time.h>
+#include <ucontext.h>
+
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -22,6 +26,62 @@
 
 namespace
 {
+    // GSPLAY_SAMPLE=FILE: the program counter every millisecond of CPU time from the second loop on, as 64-bit addresses
+    // (scripts/sample_profile.py maps them with nm). Addresses outside this binary are the GL driver or libc.
+    constexpr size_t kMaxSamples = 1u << 20;
+    uint64_t g_samples[kMaxSamples];
+    volatile size_t g_sampleCount = 0;
+
+    void onSampleTick(int, siginfo_t *, void *uc)
+    {
+        if (g_sampleCount >= kMaxSamples)
+            return;
+        const ucontext_t *u = static_cast<const ucontext_t *>(uc);
+#if defined(__aarch64__)
+        g_samples[g_sampleCount++] = u->uc_mcontext.pc;
+#else
+        g_samples[g_sampleCount++] = static_cast<uint64_t>(u->uc_mcontext.gregs[REG_RIP]);
+#endif
+    }
+
+    void startSampling()
+    {
+        struct sigaction sa{};
+        sa.sa_sigaction = onSampleTick;
+        sa.sa_flags = SA_SIGINFO | SA_RESTART;
+        sigemptyset(&sa.sa_mask);
+        const itimerval tick{{0, 1000}, {0, 1000}};
+        sigaction(SIGPROF, &sa, nullptr);
+        setitimer(ITIMER_PROF, &tick, nullptr);
+    }
+
+    void stopSampling(const char *path)
+    {
+        const itimerval off{};
+        setitimer(ITIMER_PROF, &off, nullptr);
+        if (FILE *f = std::fopen(path, "wb"))
+        {
+            std::fwrite(g_samples, sizeof(uint64_t), g_sampleCount, f);
+            std::fclose(f);
+            std::printf("wrote %zu samples to %s\n", static_cast<size_t>(g_sampleCount), path);
+        }
+        // the libraries' addresses, for scripts/sample_modules.py
+        const std::string mapsPath = std::string(path) + ".maps";
+        FILE *in = std::fopen("/proc/self/maps", "rb");
+        FILE *out = std::fopen(mapsPath.c_str(), "wb");
+        if (in && out)
+        {
+            char buffer[4096];
+            size_t n;
+            while ((n = std::fread(buffer, 1, sizeof(buffer), in)) > 0)
+                std::fwrite(buffer, 1, n, out);
+        }
+        if (in)
+            std::fclose(in);
+        if (out)
+            std::fclose(out);
+    }
+
     double nowMs()
     {
         return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -193,6 +253,8 @@ int main(int argc, char **argv)
         gles->setCaptureNextPresent(loop == loops - 1 && !output.empty());
 #endif
         restoreRegisters(gs, dump);
+        if (loop == 1 && std::getenv("GSPLAY_SAMPLE"))
+            startSampling();
         const double start = nowMs();
         double last = start;
         int vsyncIndex = 0;
@@ -255,6 +317,8 @@ int main(int argc, char **argv)
             }
         }
         times.push_back(nowMs() - start);
+        if (loop == loops - 1 && loops > 1 && std::getenv("GSPLAY_SAMPLE"))
+            stopSampling(std::getenv("GSPLAY_SAMPLE"));
         if (loop == loops - 1)
             {
 #ifdef GSPLAY_GLES

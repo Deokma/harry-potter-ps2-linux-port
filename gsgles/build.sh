@@ -18,13 +18,14 @@ case $target in
     cpu|gles) cxx=g++; cc=gcc; arch="-msse4.1"; link="-ldl -lpthread" ;;
     gles-aarch64)
         cxx=aarch64-linux-gnu-g++; cc=aarch64-linux-gnu-gcc
-        arch="-march=armv8-a+fp+simd+crc -mtune=cortex-a53 -DUSE_SSE2NEON -I$tp/sse2neon"
-        # the device's libstdc++ is older; SDL and GLES still come from the firmware through dlopen
-        link="-static-libstdc++ -static-libgcc -ldl -lpthread" ;;
+        arch="-march=armv8-a+fp+simd+crc -mtune=cortex-a53 -DUSE_SSE2NEON -I$tp/sse2neon -fno-pie"
+        # the device's libstdc++ is older; SDL and GLES still come from the firmware through dlopen.
+        # no-pie: fixed addresses, so that a profile's samples map to symbols
+        link="-static-libstdc++ -static-libgcc -no-pie -ldl -lpthread" ;;
     *) echo "target: cpu, gles or gles-aarch64" >&2; exit 2 ;;
 esac
 
-flags="-std=c++20 -O2 -ffp-contract=off -w $arch -I$src -I$rt/include -I$rt/src/lib -I$rt/src/lib/Kernel -I$tp/PS2Recomp/ps2xIOP/include -I$tp/raylib-5.5/src"
+flags="-std=c++20 ${GSPLAY_OPT:--O3} -ffp-contract=off -w $arch -I$src -I$rt/include -I$rt/src/lib -I$rt/src/lib/Kernel -I$tp/PS2Recomp/ps2xIOP/include -I$tp/raylib-5.5/src"
 runtime="$rt/src/lib/gs/gs_frontend.cpp $rt/src/lib/gs/gs_cpu_backend.cpp $rt/src/lib/gs/ps2_gs_memory.cpp"
 own="$src/gsplay.cpp"
 cobjs=""

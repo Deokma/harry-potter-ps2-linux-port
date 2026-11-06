@@ -3,6 +3,7 @@
 #   sh device_table.sh            the table
 #   sh device_table.sh check      also compares with the interpreter on the device's own floats (slow: minutes)
 #   sh device_table.sh variants   times every vu1play-v* here (builds with other compiler options)
+#   sh device_table.sh handoff    also times a direct vertex hand-over in place of copying packets
 cd "$(dirname "$0")" || exit 1
 tar xof vu1-frames.tar
 chmod +x vu1play-*
@@ -20,6 +21,13 @@ for d in slot2 i01; do
     echo "--- $d"
     ./vu1play-aarch64 "$d" --mode native --passes 12 | cut -c1-150
 done
+if [ "${1:-}" = handoff ]; then
+    for d in slot2 i01; do
+        echo "--- $d, packets copied to a ring, then vertices handed over"
+        ./vu1play-aarch64 "$d" --mode native --passes 12 | grep '^over' | cut -c1-110
+        VU1PLAY_HANDOFF=1 ./vu1play-aarch64 "$d" --mode native --passes 12 | grep '^over\|^handoff' | cut -c1-110
+    done
+fi
 if [ "${1:-}" = check ]; then
     for d in slot2 i01; do
         echo "--- $d interpreter and check"

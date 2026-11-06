@@ -472,6 +472,37 @@ The docs held no numeric VU1 estimate to compare with. These are the first real 
 - **Where the pairs go:** two runs take 90 % of them: `0x65b`-`0x730` and `0x301`-`0x4f3`. A 14-pair light attenuation loop (`0x6ec`-`0x6f9`, with ESUM, SQRT and
   DIV per vertex) alone runs 156,513 times in the gameplay frame, 35 % of its pairs.
 
+## Where the GS thread's time goes, and direct vertex handoff
+
+M3 said handing vertices over directly from VU1 could remove most of the GIF parsing cost. **That was wrong: parsing is a quarter to a third of it.**
+A sampling profile on the device (`GSPLAY_SAMPLE`, `scripts/sample_profile.py`, `scripts/sample_modules.py`; 100 samples per second, about 1,400 per dump, so
+1 or 2 points either way) shows the CPU time of the GS path, the "GIF" and "cmd" columns together:
+
+| Share of CPU samples | `I01_1` | `N02_1` | About, ms per 2 vsyncs |
+|---|---|---|---|
+| Parsing and vertices (`writeRegisterPacked`, `processGIFPacket`, `vertexKick`, `SubmitPackedStrip`, `appendPrimitive` and the like) | 24.6 % | 30.6 % | 14-17 |
+| VRAM writes and textures (`fastUpload`, `ReadVram`, `resolveTexture`, CLUT) | 18.4 % | 13.1 % | 7-10 |
+| libc (mostly unnamed in its exports, so likely `memcpy`; `ioctl` 4-6 %, mutexes 3-5 %, `mmap` 2 %) | 28.2 % | 24.5 % | 13-15 |
+| The Mali driver | 21.0 % | 23.5 % | 12-13 |
+| gsplay's own per-packet timing, not in a real run | about 3 % | about 3 % | |
+
+The parsing and VRAM rows come from one run and the libc and driver rows from a second of the same length; the two runs took the same time to within 1 %.
+
+The hand-over itself is cheap. `VU1PLAY_HANDOFF=1` turns each packet's vertices into host vertices on the VU1 thread, and copies the rest (register writes) for the renderer:
+
+| Device, ms | Gameplay `slot2+2` | Street `i01+5` |
+|---|---|---|
+| VU1, copying packets | 28.8 | 18.0 |
+| VU1, handing vertices over | 29.8 | 18.8 |
+| Vertices in the shape it takes (PACKED, `ST RGBAQ XYZF2`) | 99.3 % | 99.3 % |
+
+So handoff costs about 1 ms and can save at most the 14-17 ms above, less whatever draw batching and state handling remain. **It wasn't tried end to end**, and these
+dumps aren't the same frames as the savestates. It is worth doing, but it won't close the gap alone. The other half needs a thread split: GL calls away from parsing and
+VRAM writes (M3's option), plus finding what the libc time is.
+
+`-O3` also helps this path: GIF 90.8 to 85.8 ms, 82.4 to 76.2 ms, and 10.1 to 7.6 ms on `F01_1`, per 4 vsyncs; commands and GPU unchanged. It's now the default in `gsgles/build.sh`.
+Pictures weren't compared again after that change.
+
 ## Two findings
 
 **The interpreter was wrong, and the translated code showed it.** The game passes FBMSK along as an integer with
@@ -500,6 +531,6 @@ sh vu1/build.sh x86 && private/vu1/vu1play-x86 private/vu1/slot2 --mode check --
 DEVICE_TIMEOUT=400 sh scripts/device_run.sh private/vu1/vu1play-aarch64 private/vu1/vu1-frames.tar vu1/device_table.sh -- sh device_table.sh check
 ```
 
-The connection dropped once during a device run. The device had not rebooted (uptime 3.7 hours, 53 C), so it was the network, and a
-long run can be started with `nohup` over SSH to survive it. `scripts/device_run.sh` prints "DEVICE LOST ... (reboot?)" for any lost
+The connection dropped twice during device runs. The device had not rebooted either time (uptime 3.7 and 4 hours, 53 C), so it was the network.
+`scripts/device_detach.sh` starts a run with `nohup` and polls for it, which survives that. `scripts/device_run.sh` prints "DEVICE LOST ... (reboot?)" for any lost
 connection: check uptime before calling it a reboot.

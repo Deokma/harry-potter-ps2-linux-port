@@ -111,10 +111,8 @@ More commands at the end of this file ("Commands that worked").
 
 **Next: M2, then M5.** M1, M3 and M4 are done: `docs/PHASE_4.md`, "M1 result", "M3 result", "M4 result". VU1 is translated (`eegen/vu1gen.py`), GIF packets match the
 interpreter on both saved frames, on the device too. Device cost: VU1 28.3 ms (gameplay) and 17.7 ms (street), VIF another 10.6 and 8.8 ms.
-**M3's CPU cost is
-over budget and is the main risk now:** GIF parsing plus GL commands is 35-100 ms per 3D frame on one A53, against a
-33 ms frame. Options are in "M3 result"; handing vertices over directly from a translated VU1 (M4) looks the most
-promising and is untested. Keep calls down: read a file once in a larger piece, apply several edits from one script.
+**The GS path's CPU cost is over budget and is the main risk now:** 35-100 ms per 3D frame on one A53, against a 33 ms frame. Direct vertex handoff costs about 1 ms and can save at most
+14-17 ms of it, so it won't close the gap alone: parsing is a quarter to a third, the rest is VRAM and textures, libc and the driver ("M4 result"). A thread split is the other half. Keep calls down: read a file once in a larger piece, apply several edits from one script.
 
 To see the menu on the PC, from the repo root in WSL:
 ```
@@ -131,7 +129,7 @@ python3 -I eegen/vu1gen.py private/vu1/slot2/micro.bin private/vu1/vu1_gen.inc -
 sh vu1/build.sh x86 && private/vu1/vu1play-x86 private/vu1/slot2 --mode check --passes 2
 DEVICE_TIMEOUT=400 sh scripts/device_run.sh private/vu1/vu1play-aarch64 private/vu1/vu1-frames.tar vu1/device_table.sh -- sh device_table.sh check
 ```
-The device has no `taskset`: `VU1PLAY_CORE=N` pins vu1play itself. Rebuild for the device with `sh vu1/build.sh aarch64`.
+The device has no `taskset`: `VU1PLAY_CORE=N` pins vu1play itself. Its Wi-Fi drops under load without a reboot: use `scripts/device_detach.sh` for long runs, and check uptime before calling a drop a reboot. Rebuild for the device with `sh vu1/build.sh aarch64`.
 Reference pictures and logs: `trial/reference/`. Carry into M2: `docs/PHASE_4.md`, "Carry into M2".
 
 ## History (older state; where it differs, the section above wins)

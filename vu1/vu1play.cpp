@@ -69,6 +69,75 @@ namespace
         }
     };
 
+    // VU1PLAY_HANDOFF: what a direct hand-over to the renderer would cost on this thread. A packet's vertices in the usual
+    // shape (PACKED, ST RGBAQ XYZF2) become host vertices in a ring, and everything else (register writes) is copied for
+    // the renderer to apply. Only this side: the renderer still has to take them and issue the draws.
+    struct HostVertex
+    {
+        float s, t, q;
+        uint32_t rgba;
+        uint32_t xy, z;
+    };
+    std::vector<uint8_t> g_handoff(1u << 22);
+    size_t g_handoffPos = 0;
+    uint64_t g_handoffVertices = 0, g_handoffOtherBytes = 0;
+
+    inline uint8_t *handoffSpace(size_t size)
+    {
+        if (g_handoffPos + size > g_handoff.size())
+            g_handoffPos = 0;
+        uint8_t *p = g_handoff.data() + g_handoffPos;
+        g_handoffPos += size;
+        return p;
+    }
+
+    void handoffPacket(const uint8_t *data, uint32_t size)
+    {
+        uint32_t pos = 0;
+        while (pos + 16u <= size)
+        {
+            uint64_t lo, hi;
+            std::memcpy(&lo, data + pos, 8);
+            std::memcpy(&hi, data + pos + 8, 8);
+            const uint32_t nloop = lo & 0x7FFFu;
+            const uint32_t flg = (lo >> 58) & 3u;
+            uint32_t nreg = (lo >> 60) & 15u;
+            if (nreg == 0u)
+                nreg = 16u;
+            uint32_t bytes;
+            if (flg == 0u)
+                bytes = nloop * nreg * 16u;
+            else if (flg == 1u)
+                bytes = ((nloop * nreg + 1u) & ~1u) * 8u;
+            else
+                bytes = nloop * 16u;
+            if (flg == 0u && nreg == 3u && (hi & 0xFFFu) == 0x412u && pos + 16u + bytes <= size)
+            {
+                const uint8_t *in = data + pos + 16u;
+                auto *out = reinterpret_cast<HostVertex *>(handoffSpace(nloop * sizeof(HostVertex)));
+                for (uint32_t v = 0; v < nloop; ++v, in += 48)
+                {
+                    uint32_t w[12];
+                    std::memcpy(w, in, 48);
+                    out[v].s = reinterpret_cast<const float *>(w)[0];
+                    out[v].t = reinterpret_cast<const float *>(w)[1];
+                    out[v].q = reinterpret_cast<const float *>(w)[6 + 0];
+                    out[v].rgba = (w[4] & 0xFFu) | (w[5] & 0xFFu) << 8 | (w[6] & 0xFFu) << 16 | (w[7] & 0xFFu) << 24;
+                    out[v].xy = (w[8] & 0xFFFFu) | w[9] << 16;
+                    out[v].z = w[10] >> 4;
+                }
+                g_handoffVertices += nloop;
+            }
+            else
+            {
+                const uint32_t all = std::min(size - pos, 16u + bytes);
+                std::memcpy(handoffSpace(all), data + pos, all);
+                g_handoffOtherBytes += all;
+            }
+            pos += 16u + bytes;
+        }
+    }
+
     // Vertices in a stream of GIF packets, counting XYZ registers
     uint64_t countVertices(const uint8_t *data, uint32_t size)
     {
@@ -168,10 +237,16 @@ int main(int argc, char **argv)
                              { interpPackets.add(data, size, mode == "check"); vertices += countVertices(data, size); });
     // On the last pass of a timing run a packet is only copied out, as a queue to the GS thread would.
     static bool timing = false, keepKicks = mode == "check", countKicks = mode == "native";
+    static const bool handoff = std::getenv("VU1PLAY_HANDOFF") != nullptr;
     static std::vector<uint8_t> ring(1u << 21);
     static size_t ringPos = 0;
     egVu1SetKickSink([](const uint8_t *data, uint32_t size)
                      {
+                         if (timing && handoff)
+                         {
+                             handoffPacket(data, size);
+                             return;
+                         }
                          if (timing)
                          {
                              if (ringPos + size > ring.size())
@@ -373,6 +448,9 @@ int main(int argc, char **argv)
     }
     if (keptVertices)
         std::printf("VU cycles per vertex %.1f, ns per vertex %.1f\n", static_cast<double>(keptCycles) / keptVertices, passVuMs * 1e6 / keptVertices);
+    if (handoff)
+        std::printf("handoff, last passes in total: %llu vertices, %llu other bytes; per pass %.2f MB of vertices\n", (unsigned long long)g_handoffVertices,
+                    (unsigned long long)g_handoffOtherBytes, g_handoffVertices * sizeof(HostVertex) / 1048576.0 / (passes - 1));
     if (const char *where = std::getenv("VU1PLAY_COUNTS"))
     {
         FILE *f = std::fopen(where, "wb");
