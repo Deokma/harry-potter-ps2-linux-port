@@ -32,18 +32,17 @@ Keep tool output short.
   | `frame-i01b` (street, 2 ticks) | 7,145,301 | 39.7 ms | 50 ms | 98.6 % |
 
 - PC boot on PS2Recomp's runtime (x86 in WSL, software GS, not the device) shows the
-  language screen from about 4 s. It does not get past that screen yet.
+  language screen from about 4 s. CROSS now leaves it, then the game stalls in a wait at `0x29bd38`.
 - PS2Recomp bugs fixed so far: `JR` / `JALR` old register, macro code writing `vf0`,
-  byte-at-a-time `memmove`. Replay stand-in now has a real clock (CP0 Count) and scratchpad
+  byte-at-a-time `memmove`, the pad stub's ID in pressure mode (`0x79`), CP0 `Count` that never advanced. Replay stand-in now has a real clock (CP0 Count) and scratchpad
   DMA, and resumes the main thread from its kernel-saved registers.
 
 **Not in git (`private/`, `D:\ps2port-data\`):**
-- `private/third_party/trial/harness/`: our replay harness (`main.cpp`, `shim.cpp`,
-  `hwmodel.inc`, `harness.h`, `make_harness.py`, `build.sh`, pipelines), plus generated
-  `gen/`, `gen_eg/` (hot set), `gen_eg_fg/` (whole program), `gen_vu0/`, `build/`.
+- `private/third_party/trial/harness/`: the replay harness's generated `gen/`, `gen_eg/` (hot set), `gen_eg_fg/`
+  (whole program), `gen_vu0/`, `build/`. Its sources are in `harness/`, in git.
 - `private/third_party/PS2Recomp/` (commit `e5636981`), changes in
   `trial/ps2recomp-trial.patch`, `ps2recomp-vu-jr-fix.patch`, `ps2recomp-libc-memmove.patch`,
-  `ps2recomp-m1-runtime.patch` (the whole diff of 7 runtime files against that commit, so it
+  `ps2recomp-count-emitter.patch`, `ps2recomp-m1-runtime.patch` (the whole diff of the runtime files against that commit, so it
   already holds the trial patch's hunks for those files; it passes `git apply --cached --check`);
   its generated code in `trial/out-b/`.
 - `trial/boot-20261106-161825/`: the language-screen boot (`frames/`, `log.txt`), the PC
@@ -58,8 +57,8 @@ Keep tool output short.
 
 **Rebuild (WSL, repo root), when only harness sources changed; `H=private/third_party/trial/harness`:**
 ```
-REUSE=1 EG=1 EG_REUSE=1 sh $H/build.sh x86 count frame-v0     # binary: $H/build/harness-x86-count-frame-v0-eg
-REUSE=1 EG=1 EG_REUSE=1 EG_DIR=$H/gen_eg_fg HARNESS_DEFS=-DHARNESS_LEAN_DISPATCH sh $H/build.sh aarch64 time frame-v4
+REUSE=1 EG=1 EG_REUSE=1 sh harness/build.sh x86 count frame-v0     # binary: $H/build/harness-x86-count-frame-v0-eg
+REUSE=1 EG=1 EG_REUSE=1 EG_DIR=$H/gen_eg_fg HARNESS_DEFS=-DHARNESS_LEAN_DISPATCH sh harness/build.sh aarch64 time frame-v4
 ```
 Generator check before any device timing (from `trial/rec`), must print 0 bytes and the exact count:
 ```
@@ -79,7 +78,7 @@ PS2PORT_STATS=1 sh scripts/ps2recomp_trial.sh boot 60 "CROSS@15+0.3/5"
 More commands at the end of this file ("Commands that worked").
 
 **Traps:**
-- `harness/gen/` holds one variant at a time: v0 for x86 objects, v3 for aarch64 (left at
+- `trial/harness/gen/` holds one variant at a time: v0 for x86 objects, v3 for aarch64 (left at
   v3). Regenerate with `make_harness.py` before a batch has to recompile.
 - The x86 `-eg` binary has eegen's hot set (225 functions), the aarch64 one the whole
   program. Test stop logic against whole-program behaviour: eegen calls directly, so table
@@ -98,30 +97,23 @@ More commands at the end of this file ("Commands that worked").
   upload from the VIF1 interrupt handler (`0x2D3398`), which the runtime never ran. It now
   runs in place when a flagged VIFcode completes. Details in `docs/PHASE_4.md`.
 
-**Next: finish M1, then M3 (it needs no runtime), M2, M4, M5.** M1 passed its 90-call limit
-(about 115 calls used) and the user chose to hand off here. **Any further M1 limit is the
-user's to set; if their first message gives none, ask.** Revised estimates for M2–M5 are in
-`docs/PHASE_4.md`. To keep calls down: read a file once in a larger piece, apply several
-edits from one script. Still to do in M1:
-1. Why CROSS doesn't leave the language screen. The log's only pad line is PADMAN's load;
-   `PS2PORT_PAD` is parsed in `ps2_pad.cpp`. Not known yet whether the game reads the pad at
-   all or reads a buffer the stub doesn't fill.
-2. A GIF packet log with hashes, as M2's reference (language screen, and the menu if item 1
-   gets there).
-3. Move the harness sources into the repo (nothing moved yet; no line over 200 characters in
-   them, so no embedded data tables):
-   - To a new `harness/`: `build.sh ctx_offsets.cpp eg_bisect.py eg_pipeline.sh
-     frame_pipeline.sh harness.h harness_count.h harness_fastgpr.h harness_fastmem.h
-     hwmodel.inc main.cpp make_harness.py shim.cpp`. `build_a64.sh` is unused; leave it.
-   - `gen*/` and `build/` stay in `private/third_party/trial/harness/`, so binary paths don't
-     change.
-   - `build.sh`: `src=` its own directory, `repo=$src/..`, `tp=$repo/private/third_party`,
-     `h=$tp/trial/harness`; flags `-I$src -I$h`; take `shim.cpp`, `main.cpp` and
-     `harness_count.h` from `$src`; drop the old `repo=` line.
-   - `eg_pipeline.sh`, `frame_pipeline.sh`: add `s=$root/harness`, use it for `build.sh` and
-     `make_harness.py`. `eg_bisect.py`: `harness/build.sh`. `make_harness.py`: LibC path is
-     `parents[1] / "private/third_party/PS2Recomp/..."`.
-   - Update `docs/PROVENANCE.md`, then run the generator check above (0 bytes, 2,861,449).
+**Next: finish M1, then M3 (it needs no runtime), M2, M4, M5.** M1 used this session's limit of
+40 calls (about 155 in all) and is not finished. **Any further M1 limit is the user's to set; if
+their first message gives none, ask.** Revised estimates for M2-M5 are in `docs/PHASE_4.md`. To
+keep calls down: read a file once in a larger piece, apply several edits from one script. A
+runtime rebuild is dominated by the LTO link, about 12 min, so run it in the background and batch
+changes. Still to do in M1:
+1. Why the wait at `0x29bd38` doesn't end now that `Count` runs. Log the struct at `DAT_00395730`
+   (divisor, last, total, pause flag at +0x18) and `s3` at exit, or read how the divisor is set
+   (`0x2f1fc0`, `0x2f21c8`). If the divisor is per second the wait is 501 s; a 600 s boot would
+   show it. Details in `docs/PHASE_4.md`, "M1 continued".
+2. Then the menu: PNG, `gif.log`, and which path draws it. The language screen's log exists
+   (`trial/boot-20261106-171129/gif.log`).
+
+Carry into M2: eegen's handling of `Count` must match `ps2portReadCount`, and its native list must
+cover the `scePad*` stubs in `trial/config_b.toml`; neither was checked. The GIF log changes
+between boots of one build if the repeat result in `docs/PHASE_4.md` says so, which bears on M2's
+done-when.
 
 ## History (older state; where it differs, the section above wins)
 
@@ -147,7 +139,7 @@ edits from one script. Still to do in M1:
   - **Milestone 1 status (2026-11-02):** replay states for NTSC slots 2
     and 3 built (`scripts/make_replay_state.py`, frame = one call of
     `0x2635D0`, sp 0x1FFEBD0); the harness now replays a whole program
-    against an idle-hardware model (`trial/harness/hwmodel.inc`), with
+    against an idle-hardware model (`harness/hwmodel.inc`), with
     PS2Recomp's `LibC.cpp` for math/libc stubs and counted defaults for the
     rest. **Result (C2): the gameplay frame runs correctly on the device
     but takes 124 ms at 1.416 GHz (69 M guest instr/s, 3.7x over the
@@ -215,7 +207,7 @@ edits from one script. Still to do in M1:
   - Traps found: PS2Recomp emits nothing for a delay-slot `nop` (count
     convention); its 127 native stubs must stay native (`--native`); GCC
     fuses fmul+fadd on aarch64 unless `-ffp-contract=off`.
-  - Build traps (C6): `harness/gen/` holds one variant at a time, v0 for x86
+  - Build traps (C6): `trial/harness/gen/` holds one variant at a time, v0 for x86
     objects and v3 for aarch64 ones: regenerate it before rebuilding a batch
     (`make_harness.py`, now left at v3). The x86 `-eg` binary has the hot set
     (225 functions), the aarch64 one the whole program. A non-EG build deletes
@@ -585,13 +577,13 @@ PERF=1 scripts/ps2recomp_trial.sh boot 60            # same, sampled with perf
 PS2PORT_SNAP_PC=0xADDR PS2PORT_SNAP_NTH=1 PS2PORT_SNAP_FILE=/abs/path/rec \
     scripts/ps2recomp_trial.sh boot 60
 # harness (private/third_party/trial/harness): sources for that recording, then build
-python3 -I private/third_party/trial/harness/make_harness.py REC private/third_party/trial/out-b \
+python3 -I harness/make_harness.py REC private/third_party/trial/out-b \
     private/third_party/trial/harness
-sh private/third_party/trial/harness/build.sh aarch64 time    # or x86, count
+sh harness/build.sh aarch64 time    # or x86, count
 # milestone 1: replay state for the gameplay frame from a savestate (game data -> private/)
 python -I scripts/make_replay_state.py "D:/ps2port-data/savestates/SLUS-20826 (C71A6146).02.p2s"     private/third_party/trial/ctx_offsets.json private/third_party/trial/rec/frame-ntsc02     --pc 0x2635d0 --sp 0x1ffebd0 --gp 0x3a7570
 # whole-program reference + quick-optimized aarch64 build (WSL, ~45 min)
-sh private/third_party/trial/harness/frame_pipeline.sh frame-ntsc02
+sh harness/frame_pipeline.sh frame-ntsc02
 # device run at the pinned budget clock (Git Bash)
 sh scripts/harness_device_run.sh HARNESS REC 20 1416000 -- HARNESS_SKIP=0x2cd6a0 HARNESS_PMU=1
 # time profile on the device: add HARNESS_SAMPLE=/userdata/ps2bench/harness/x.samples to the run,
@@ -601,9 +593,9 @@ python3 -I scripts/sample_profile.py HARNESS SAMPLES --nm aarch64-linux-gnu-nm -
 python3 -I eegen/eegen.py private/extract/SLUS-20826/files/SLUS_208.26 private/third_party/trial/function_map.csv \
     private/third_party/trial/harness/gen_eg --functions LIST \
     --ps2recomp-table private/third_party/trial/out-b/register_functions.cpp --skip 0x2cd6a0
-REUSE=1 EG=1 sh private/third_party/trial/harness/build.sh x86 count frame-v0   # only eegen's objects rebuild
+REUSE=1 EG=1 sh harness/build.sh x86 count frame-v0   # only eegen's objects rebuild
 # whole program through eegen: x86 check + aarch64 build (WSL, ~35 min); binaries end in -eg-TAG
-sh private/third_party/trial/harness/eg_pipeline.sh frame-ntsc02 LIST TAG
+sh harness/eg_pipeline.sh frame-ntsc02 LIST TAG
 # RAM diff by region (e.g. replay result vs a PCSX2 savestate one frame later)
 python -I scripts/diff_ram_regions.py A B private/extract/SLUS-20826/files/SLUS_208.26 --mask 0x...:0x...
 # VU0 in the replay: HARNESS_VU0= 0 skipped, 1 interpreter, 2 recorded results,
@@ -612,9 +604,9 @@ python -I scripts/diff_ram_regions.py A B private/extract/SLUS-20826/files/SLUS_
 python3 -I eegen/vu0gen.py private/third_party/trial/rec/frame-ntsc02.vu0code \
     private/third_party/trial/harness/gen_vu0/vu0_programs.inc --entries 0x1,0x4,0x7,0xa,0xd,0x10,0x13,0x16,0x19,0x1c,0x1f,0x22,0x25,0x28,0x2b,0x2e,0x31,0x34
 # relink after harness changes (gen/ must hold the right variant if a batch has to recompile)
-REUSE=1 EG=1 EG_REUSE=1 sh private/third_party/trial/harness/build.sh x86 count frame-v0
+REUSE=1 EG=1 EG_REUSE=1 sh harness/build.sh x86 count frame-v0
 REUSE=1 EG=1 EG_REUSE=1 EG_DIR=private/third_party/trial/harness/gen_eg_fg HARNESS_DEFS=-DHARNESS_LEAN_DISPATCH \
-    sh private/third_party/trial/harness/build.sh aarch64 time frame-v4
+    sh harness/build.sh aarch64 time frame-v4
 # which saves hold a whole game frame, and the make_replay_state.py arguments for each
 python -I scripts/frame_states.py STATE.p2s STATE.p2s ...
 # an aligned frame: the state one vblank after the save (main thread still in the wait), its kernel-saved

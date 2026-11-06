@@ -121,7 +121,7 @@ Changes (all in the runtime, `trial/ps2recomp-m1-runtime.patch`):
   re-enters it.
 
 Open:
-- CROSS presses don't leave the language screen, so the menu has not been reached.
+- CROSS presses don't leave the language screen, so the menu has not been reached. (Pad part fixed, see "M1 continued"; the menu is still not reached.)
 - 24 of the 26 sampled frames are two different pictures (14 and 10) that differ across the
   whole screen. Cause not looked at.
 - The frame sampled at 2 s is solid magenta at 640x448. Not looked at.
@@ -138,6 +138,53 @@ VIF1 chains from saved frames, for M4 (`scripts/vif_chain.py`, static walk, not 
 | Vectors per MSCAL, mean | 155.7 | 146 |
 
 The gameplay chain has no DIRECT and 54 interrupt-flagged NOPs, each after a MARK.
+
+# M1 continued (2026-11-06, second session)
+
+Measured on the PC only: x86 in WSL, the runtime's software GS. Nothing here ran on the device.
+Boots of 120 s, CROSS pressed every 5 s from 5 s after the first pad read; the last column of
+the "before" run used 60 s and presses from 15 s.
+
+| | Before (60 s) | Pad ID fixed | Pad ID fixed, Count runs |
+|---|---|---|---|
+| Language screen | never left | until 8.6 s, black from 10.8 s | until 8.4 s, black from 10.6 s |
+| GIF packets | 19,331 | 2,212 | 2,429 |
+| GIF bytes | about 305 MB | 34.3 MB | 37.7 MB |
+| Main thread at exit | | pc `0x29bd40` | pc `0x29bd40` |
+
+**Pad, fixed.** The game's poll (`0x2ccc50`) drops the pad unless the ID byte is `0x79` once it
+has asked for pressure mode (`0x2f7e50`). The stub always answered `0x73`. It now answers `0x79`
+in pressure mode. That CROSS is what leaves the screen rests on this before and after; the fixed
+build was not run without presses.
+
+**The stall after the language screen, not fixed.** The main thread sits in `0x29bd38`-`0x29bd4c`
+(55 of 59 samples at `0x29bd40`), a busy-wait with no syscall:
+`do { v = stopwatch(*0x395730); } while (v - s3 < 501);`. The stopwatch (`0x2f1f58`) adds the
+change in a clock (`0x2f2050`, built on CP0 `Count` read at `0x2f2040`) and divides the total by
+the first field of its struct.
+
+**CP0 Count, a real bug, fixed, and not enough.** Nothing in the runtime advanced `cop0_count`
+(7 reads in 4 generated functions, no writes). It now reads a host clock at 294.912 MHz
+(`ps2portReadCount`, in the 4 generated files and in PS2Recomp's emitter). **The wait still did
+not end within the run.** The cause is not established. Not checked: the divisor at the start of
+the struct at `DAT_00395730`, its pause flag at +0x18, `s3`, the vblank callback `0x2f20d0`. If the
+divisor were per second rather than per millisecond the wait would be 501 s, longer than the run;
+that is a guess to test, not a finding.
+
+**GIF packet log.** `PS2PORT_GIF_LOG=FILE` (the boot script sets it to `gif.log`): one line per
+packet with path, bytes and FNV-1a 64 of its contents; the line number is the sequence. A masked
+PATH3 packet appears twice. In `boot-20261106-171129` it has 2,429 lines (PATH1 2,119, PATH3 310)
+and 37,749,184 bytes, matching the runtime's own `gifpkts` and `gifbytes`. It covers the language
+screen only, and has no frame markers. A repeat boot of the same build with the same pad script differs: 2,429 and 2,336 packets, the first 1,753 identical, 99 of 99 distinct hashes shared. So M2's done-when ("same GIF packet hashes as M1") can't be read as an identical log while the clock is a host clock. M2 needs either a fixed-step clock for its comparison runs or a looser comparison such as matching hash sets. Not decided.
+
+Still missing from M1's done-when: a menu PNG, its GIF log, and which path draws the menu.
+
+Other notes: in these boots the frame sampled at 2 s is black at 512x447, not the solid magenta at
+640x448 recorded above. The language screen frames are 512x447. Neither was looked into. Harness
+sources moved to `harness/`; generator check after the move: 0 RDRAM bytes differ, 2,861,449
+instructions. `scripts/rpc_binds.py` lists a game's RPC binds and callers.
+
+Calls: this session used its limit of 40, so M1 stands at about 155.
 
 ## Revised estimate for M2–M5
 

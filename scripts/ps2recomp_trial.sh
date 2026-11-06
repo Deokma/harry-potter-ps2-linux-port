@@ -109,7 +109,7 @@ boot() {
     if [ "${PERF:-0}" = 1 ]; then
         prof="$perf record -e cpu-clock -F 499 -o /tmp/ps2port-perf.data --"
     fi
-    PS2PORT_HEADLESS=1 PS2PORT_RUN_SECONDS=$1 PS2PORT_PAD=${2:-} PS2PORT_FRAME_DIR=$dir/frames \
+    PS2PORT_HEADLESS=1 PS2PORT_RUN_SECONDS=$1 PS2PORT_PAD=${2:-} PS2PORT_FRAME_DIR=$dir/frames PS2PORT_GIF_LOG=$dir/gif.log \
         timeout -k 10 $(($1 + 30)) $prof \
         "$tp/build-runtime/ps2xRuntime/ps2EntryRunner" "$elf" > "$dir/log.txt" 2>&1 \
         && rc=0 || rc=$?
