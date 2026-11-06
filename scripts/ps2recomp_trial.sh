@@ -67,6 +67,11 @@ runtime() {
     # clone of the same tag is enough
     [ -d "$tp/raylib-5.5" ] || git clone --depth 1 --branch 5.5 \
         https://github.com/raysan5/raylib.git "$tp/raylib-5.5"
+    # vf0 is a constant on the VU, but PS2Recomp's macro code writes it (the
+    # game's wait for a microprogram doubles vf0.w, PHASE_3 C6)
+    grep -l 'ctx->vu0_vf\[0\] = PS2_VBLEND' "$trial/out-$1"/*.cpp 2>/dev/null | while read -r f; do
+        sed -i -E 's/ctx->vu0_vf\[0\] = PS2_VBLEND\([^;]*\);//' "$f"
+    done
     # sync by checksum: only changed files get new times, so ninja rebuilds
     # only the unity batches that hold them
     rsync -rc --delete --include='*.cpp' --exclude='*' \
@@ -104,7 +109,7 @@ boot() {
     if [ "${PERF:-0}" = 1 ]; then
         prof="$perf record -e cpu-clock -F 499 -o /tmp/ps2port-perf.data --"
     fi
-    PS2PORT_RUN_SECONDS=$1 PS2PORT_PAD=${2:-} PS2PORT_FRAME_DIR=$dir/frames \
+    PS2PORT_HEADLESS=1 PS2PORT_RUN_SECONDS=$1 PS2PORT_PAD=${2:-} PS2PORT_FRAME_DIR=$dir/frames \
         timeout -k 10 $(($1 + 30)) $prof \
         "$tp/build-runtime/ps2xRuntime/ps2EntryRunner" "$elf" > "$dir/log.txt" 2>&1 \
         && rc=0 || rc=$?
