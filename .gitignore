@@ -3,6 +3,14 @@
 # lives in ./private/, which is ignored as a whole.
 /private/
 
+# Ghidra output derived from the game: the export belongs in private/ghidra/
+*.gzf
+*.gpr
+*.rep/
+*.cvs
+/hp.toml
+/SLUS_*.c
+
 # Large local data (savestates, GS dumps, the clean PCSX2 profile) lives
 # OUTSIDE the repo in D:\ps2port-data\, where git cannot see it. If it is
 # ever linked into the repo, keep it ignored:
