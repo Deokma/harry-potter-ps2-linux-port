@@ -38,6 +38,7 @@ Keep tool output short.
   DMA, and resumes the main thread from its kernel-saved registers.
 
 **Not in git (`private/`, `D:\ps2port-data\`):**
+- `D:\ps2port-data\raw\`: uncompressed GS dumps for gsplay; `trial/gsplay/`: its builds and frames.
 - `private/third_party/trial/harness/`: the replay harness's generated `gen/`, `gen_eg/` (hot set), `gen_eg_fg/`
   (whole program), `gen_vu0/`, `build/`. Its sources are in `harness/`, in git.
 - `private/third_party/PS2Recomp/` (commit `e5636981`), changes in
@@ -84,6 +85,9 @@ After regenerating code, run `scripts/ps2recomp_movie_stub.py` and `scripts/ps2r
 More commands at the end of this file ("Commands that worked").
 
 **Traps:**
+- The GPU stays at 240 MHz under load (`simple_ondemand`; `performance` isn't available). Raise `/sys/class/devfreq/gpu/min_freq` for a run, and restore it.
+- A swap paces everything to the display on this fbdev driver, whatever the swap interval says. Time GPU work with `GSPLAY_FINISH=1 GSPLAY_NOSWAP=1`.
+- Editing source from a heredoc script turned `\n` into real newlines more than once. Use the Edit tool or a script written with the Write tool.
 - `trial/harness/gen/` holds one variant at a time: v0 for x86 objects, v3 for aarch64 (left at
   v3). Regenerate with `make_harness.py` before a batch has to recompile.
 - The x86 `-eg` binary has eegen's hot set (225 functions), the aarch64 one the whole
@@ -105,14 +109,19 @@ More commands at the end of this file ("Commands that worked").
   upload from the VIF1 interrupt handler (`0x2D3398`), which the runtime never ran. It now
   runs in place when a flagged VIFcode completes. Details in `docs/PHASE_4.md`.
 
-**Next: M3 (GS to GLES on the device, from the saved dumps; it needs no runtime), then M2, M4, M5.** M1
-is done on the PC at about 255 calls: `docs/PHASE_4.md`, "M1 result". Keep calls down: read a file once in a
-larger piece, apply several edits from one script, use `build-fast`. Nothing has run on the device since the
-thread spike, so M3 is the first new device measurement.
+**Next: M2 and M4, then M5.** M1 and M3 are done: `docs/PHASE_4.md`, "M1 result" and "M3 result". **M3's CPU cost is
+over budget and is the main risk now:** GIF parsing plus GL commands is 35-100 ms per 3D frame on one A53, against a
+33 ms frame. Options are in "M3 result"; handing vertices over directly from a translated VU1 (M4) looks the most
+promising and is untested. Keep calls down: read a file once in a larger piece, apply several edits from one script.
 
-To see the menu again, from the repo root in WSL:
+To see the menu on the PC, from the repo root in WSL:
 ```
 PS2PORT_GS_DRAW_WINDOW=3/9 PS2PORT_RUNNER=$PWD/private/third_party/build-fast/ps2xRuntime/ps2EntryRunner PS2PORT_STATS=1 sh scripts/ps2recomp_trial.sh boot 130 "CROSS@5+0.3,START@40+3"
+```
+Dumps on the device (uncompressed dumps are in `D:\ps2port-data\raw\`, from `scripts/gsdump_unpack.py`):
+```
+sh gsgles/build.sh gles-aarch64
+DEVICE_TIMEOUT=500 sh scripts/device_run.sh -g private/third_party/trial/gsplay/gsplay-gles-aarch64 gsgles/device_table.sh /d/ps2port-data/raw/N02_1.gs -- sh device_table.sh 8 N02_1 N02_1
 ```
 Reference pictures and logs: `trial/reference/`. Carry into M2: `docs/PHASE_4.md`, "Carry into M2".
 

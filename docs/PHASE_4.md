@@ -310,6 +310,78 @@ that nobody has measured; a native file layer over the game's own (`0x2d3f60` an
 alternative. Scripted presses must outlast a frame. GIF logs differ between boots, so M2's comparison has to
 be by hash set or with a fixed clock. Not decided.
 
+# M3 result: GS to GLES on the device (2026-11-06)
+
+**M3's done-when is met: GS dumps play on the RG40XX H through GLES, with no game running, and their frames
+match the reference within a set tolerance.** Its CPU cost is the finding that matters, and it is over budget:
+see "Cost".
+
+`gsgles/` holds a dump player (`gsplay.cpp`, `gsdump.h`) and the backend (`gs_gles_backend.*`). It sits behind the
+runtime's `GSRasterBackend`, so the same frontend will feed it at M5. A contained `GSCpuBackend` keeps the 4 MB
+local memory for anything unusual.
+
+**Fidelity.** Tolerance, set here: mean absolute difference per channel on 0-255, after a 1 pixel blur, of at most
+6 against the software GS at the same frame. The software GS replaying a dump matches PCSX2's screenshot closely,
+which is why it serves as the reference, but it sits about a pixel to the left of PCSX2 where GLES does not, so it
+is shifted 1 pixel first. On the 2D logo GLES is closer to PCSX2 than it is (1.80 against 3.12).
+
+| | Dumps | Median | Worst |
+|---|---|---|---|
+| Mesa against the software GS | 25 | 3.43 | 5.06 |
+| Mali against the software GS | 20 | 3.39 | 5.03 |
+| Mali against Mesa | 20 | 0.26 | 0.44 |
+
+The 5 dumps not run on Mali are the large ones, over 250 MB. These are numbers against software rendering, not
+against PCSX2 pixel by pixel. The screenshots are only within a frame or so of a dump's ending, so they can't be
+compared exactly; by eye the frames match them.
+
+`F01_1` is black at every vsync in both renderers while PCSX2's screenshot shows the menu. Not explained.
+
+**What it took to look right.** This game lights surfaces in three per-channel passes (`FBMSK`) with `Cd * As`
+where As goes up to 2.0, so a clamped fixed-function factor lost all surface detail. `Cd * C` is drawn as
+`Cd * max(C-1, 0) + Cd * min(C, 1)`, and `Cs * C + D` is premultiplied in the shader; neither needs a framebuffer
+read. Shadows come from CT16 render targets sampled as textures, whose 1-bit alpha goes through `TEXA`. In all the
+dumps, framebuffer fetch was used for 0 runs, the no-fetch fallback for 0, and partial `FBMSK` for 0.
+
+**Cost,** measured on the device at 1.416 GHz, warm (caches kept between loops), GPU at 648 MHz, no swaps, one
+thread. Milliseconds per two vsyncs, a frame at the game's usual 30 fps; the dumps' real pacing wasn't measured.
+
+| Dump | GIF parse | of which VRAM writes | GL commands | GPU (`glFinish`) |
+|---|---|---|---|---|
+| `F01_2` WB logo | 2.2 | 1.5 | 1.6 | 6.8 |
+| `F01_0` menu with movie | 21.2 | 6.3 | 1.3 | 5.5 |
+| `PILOT_0` | 23.7 | 6.4 | 6.8 | 13.1 |
+| `N01_1` | 27.6 | 7.9 | 5.4 | 9.2 |
+| `N01_5` | 48.9 | 7.0 | 19.8 | 25.6 |
+| `N02_1` | 42.1 | 6.5 | 16.0 | 21.7 |
+| `N03_0` | 48.5 | 6.0 | 18.7 | 23.8 |
+| `N03_2` | 70.9 | 9.0 | 28.8 | 31.2 |
+| `I01_1` street | 46.1 | 8.9 | 10.9 | 18.6 |
+
+Temperature peaked at 62.7 C over the whole table and a 52 s sustained run. That is the renderer alone, with no EE
+or VU1 running.
+
+- **The GPU is fine,** at 648 MHz. The driver's `simple_ondemand` stays at 240 MHz under this load, though, and the
+  `performance` governor isn't available. Raising `min_freq` works, and the port will have to do that.
+- **The CPU is not.** GIF parsing plus GL commands runs to 35-100 ms on one thread for a 3D frame. PHASE_2 B4
+  budgeted 0.23-0.25 of a core (about 8 ms) for this line, but T1 only measured GL submission and vertex
+  conversion, never parsing GIF on an A53. Parsing alone is 0.9-2.1 cores at 30 fps. This is after removing the
+  frontend's debug history and state copies, cutting CLUT reloads, uploads and redundant uniforms, and going from
+  133 ms to 84 ms on `N02_1`. The A53 runs this code about 7 times slower than the x86 host.
+- **Options, not tried:** the frontend's per-vertex work could go on a thread of its own, separate from GL commands,
+  which leaves parsing as the limit (30-70 ms). VRAM writes could go to a worker. Most of the parse is VU1 output: a
+  translated VU1 (M4) could hand over vertices directly and skip GIF packets altogether, which would remove most of
+  it, and is the most promising, but it is untested.
+
+**Not implemented, none visibly needed yet:** mipmapping (`TEX1` MXL, always the base level), partial `FBMSK`,
+`COLCLAMP` wrap, dithering, antialiasing, a render target sampled from anywhere but its exact base, render targets
+synced by local-to-local copies, field-mode presentation. Render target alpha above `0x80` is lost once written.
+
+**Traps found.** On this fbdev driver a swap paces everything to the display whatever the swap interval says, so
+timing with swaps measures the flip. `scripts/device_run.sh` silently exited when a file wasn't yet on the device.
+
+Calls: about 85, inside the revised 80-140.
+
 ## Revised estimate for M2–M5
 
 M1 finished at about 255 tool calls against a plan of 40-70, about four times over; the table below

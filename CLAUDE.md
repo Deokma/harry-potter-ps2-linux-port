@@ -41,6 +41,7 @@ Phase results are in `docs/PHASE_N.md`; the current work is `docs/PHASE_4.md`
 - `scripts/` — ELF analysis, function map, replay states, device runs,
   profiling, RAM diffs.
 - `bench/` — device microbenchmarks.
+- `gsgles/` — GS dump player and the GLES backend (`gs_gles_backend.*`); `sh gsgles/build.sh cpu|gles|gles-aarch64`.
 - `harness/` — replay harness sources (`build.sh`, pipelines, `main.cpp`, `shim.cpp`).
 - `private/third_party/` — PS2Recomp checkout + trial patch, its output
   (`trial/out-b/`), the harness's generated code and builds (`trial/harness/`), recordings

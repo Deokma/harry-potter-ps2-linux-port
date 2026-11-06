@@ -28,7 +28,7 @@ ssh $ssh_opts "$host" "cat > '$dir/device_guard.sh'" < "$here/device_guard.sh"
 for f in $files; do
     sum=$(md5sum < "$f" | cut -d' ' -f1)
     # shellcheck disable=SC2086
-    remote=$(ssh $ssh_opts "$host" "[ -f '$dir/$(basename "$f")' ] && md5sum < '$dir/$(basename "$f")' | cut -d' ' -f1")
+    remote=$(ssh $ssh_opts "$host" "[ -f '$dir/$(basename "$f")' ] && md5sum < '$dir/$(basename "$f")' | cut -d' ' -f1" || true)
     # shellcheck disable=SC2086
     [ "$remote" = "$sum" ] || scp -q $scp_opts "$f" "$host:$dir/"
 done

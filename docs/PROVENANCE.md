@@ -35,6 +35,8 @@ recordings stay in `private/` (condition 4).
 | `scripts/*` | no | `ps2recomp_trial.sh` and `compile_generated.sh` drive PS2Recomp's tools but contain none of its code |
 | `harness/main.cpp`, `shim.cpp`, `hwmodel.inc`, `harness*.h`, `ctx_offsets.cpp` | partly | replay harness, built against PS2Recomp's `R5900Context`, `PS2Runtime` and runtime headers, and it replays its generated code (kept in `private/`); `shim.cpp` stands in for parts of its runtime. Moved from `private/` without a line-by-line audit for copied code; a keyword search found only descriptive comments |
 | `harness/make_harness.py`, `build.sh`, `eg_pipeline.sh`, `frame_pipeline.sh`, `eg_bisect.py` | no | drive PS2Recomp's output and tools; `make_harness.py` copies generated code into `private/` at build time, none of it in the repo |
+| `gsgles/gs_gles_backend.*` | no code; built against PS2Recomp's interface | a `GSRasterBackend` for GLES (ours). It uses PS2Recomp's `GSCpuBackend` and the swizzle address functions in its headers. Its CLUT decisions follow that backend's `LoadClut` and `LookupCLUT`, and the TEXA handling its `applyTexa` |
+| `gsgles/gsplay.cpp`, `gsdump.h`, `gsplay_gl.*`, `build.sh`, `device_table.sh` | no | the dump player; the format is described in `scripts/gsdump_stats.py` |
 | `docs/*` | no | describe PS2Recomp's behaviour from reading and running it |
 
 Update this table whenever code moves from `private/` into the repo or our
