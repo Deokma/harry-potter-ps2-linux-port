@@ -10,8 +10,8 @@ Phase reports live in `docs/PHASE_N.md`.
 
 **Goal now (user, 2026-11-06):** a thin slice to the title screen on the RG40XX H with
 real GLES picture, audio and input stubbed, no gameplay. No more scene measuring. Plan and
-milestones M1–M5: `docs/PHASE_4.md`. **Check with the user that the plan is approved, then
-start M1.**
+milestones M1–M5: `docs/PHASE_4.md` (approved; results and revised estimates at its end).
+**M1 is not finished: see "Next" at the end of this section.**
 
 **Rules that changed:** stop only if (a) a measured main frame exceeds its budget (50 ms in
 the street, 33.3 ms elsewhere), (b) a decision from the user is needed, or (c) the device
@@ -31,8 +31,8 @@ Keep tool output short.
   | `frame-i01a` (street, 1 tick) | 6,805,423 | 38.4 ms | 50 ms | 96.8 % |
   | `frame-i01b` (street, 2 ticks) | 7,145,301 | 39.7 ms | 50 ms | 98.6 % |
 
-- PC boot on PS2Recomp's runtime (trial) reaches the game's main loop, frames black: VU1
-  code never arrives (stop 6, PHASE_3 B3). That is where M1 starts.
+- PC boot on PS2Recomp's runtime (x86 in WSL, software GS, not the device) shows the
+  language screen from about 4 s. It does not get past that screen yet.
 - PS2Recomp bugs fixed so far: `JR` / `JALR` old register, macro code writing `vf0`,
   byte-at-a-time `memmove`. Replay stand-in now has a real clock (CP0 Count) and scratchpad
   DMA, and resumes the main thread from its kernel-saved registers.
@@ -42,8 +42,12 @@ Keep tool output short.
   `hwmodel.inc`, `harness.h`, `make_harness.py`, `build.sh`, pipelines), plus generated
   `gen/`, `gen_eg/` (hot set), `gen_eg_fg/` (whole program), `gen_vu0/`, `build/`.
 - `private/third_party/PS2Recomp/` (commit `e5636981`), changes in
-  `trial/ps2recomp-trial.patch`, `ps2recomp-vu-jr-fix.patch`, `ps2recomp-libc-memmove.patch`;
+  `trial/ps2recomp-trial.patch`, `ps2recomp-vu-jr-fix.patch`, `ps2recomp-libc-memmove.patch`,
+  `ps2recomp-m1-runtime.patch` (the whole diff of 7 runtime files against that commit, so it
+  already holds the trial patch's hunks for those files; it passes `git apply --cached --check`);
   its generated code in `trial/out-b/`.
+- `trial/boot-20261106-161825/`: the language-screen boot (`frames/`, `log.txt`), the PC
+  reference picture so far.
 - `trial/rec/frame-{ntsc02r,ntsc03r,i01a,i01b}.{in,out,vu0code,vu0data}`: checked frames.
 - `private/extract/SLUS-20826/files/`: disc files, 1.7 GB (`RESOURCE`, `MOVIES`, IRXs, ELF).
 - `private/ghidra/` (`hp.cvs`, `hp.toml`, `SLUS_208.26.c`, `SLUS_208.26.gzf`). The decompile
@@ -66,6 +70,12 @@ restarts SSH, command under History):
 ```
 sh scripts/harness_device_run.sh $H/build/harness-aarch64-time-frame-v4-eg private/third_party/trial/rec/frame-ntsc02r 20 1416000 -- HARNESS_SKIP=0x2cd6a0 HARNESS_STOP_TIMER=2 HARNESS_PMU=1 HARNESS_VU0=3
 ```
+PC boot (WSL, repo root; a runtime rebuild after a header change takes about 10 min), output
+in `trial/boot-<time>/{frames,log.txt}`:
+```
+(cd private/third_party && cmake --build build-runtime -j 12 2>&1 | grep "error:")
+PS2PORT_STATS=1 sh scripts/ps2recomp_trial.sh boot 60 "CROSS@15+0.3/5"
+```
 More commands at the end of this file ("Commands that worked").
 
 **Traps:**
@@ -76,6 +86,7 @@ More commands at the end of this file ("Commands that worked").
   changes don't reach it. That caused the one device reboot (cause not fully established).
 - PS2Recomp-only builds need `HARNESS_SKIP=0x2cd6a0`, or the vsync wait spins forever.
 - A full rebuild is about 35–45 min; run long builds in the background.
+- `scripts/ps2recomp_trial.sh boot` works only in WSL. From Git Bash it exits 126 after 0 s.
 
 **Status log (Phase 4, plan approved 2026-11-06):**
 - Hygiene done: Ghidra files in `private/ghidra/`; `git ls-files` audited, no game code or
@@ -83,11 +94,34 @@ More commands at the end of this file ("Commands that worked").
   `scripts/device_guard.sh`** (85 C, time limit, exit 3 on a thermal stop); `scripts/device_run.sh`
   runs any binary that way, `-g` stops the frontend for the display.
 - Thread spike: **pass on x86 and device**, results in `docs/PHASE_4.md`.
+- M1 so far, PC only: the black screen is fixed and the language screen appears. Textures
+  upload from the VIF1 interrupt handler (`0x2D3398`), which the runtime never ran. It now
+  runs in place when a flagged VIFcode completes. Details in `docs/PHASE_4.md`.
 
-**Next: M1** (`docs/PHASE_4.md`): first move our harness sources into the repo (no game data
-in them, update `docs/PROVENANCE.md`), then the PC boot from `scripts/ps2recomp_trial.sh`
-and `trial/ps2recomp-trial.patch`, then stop 6. **M1 budget: stop and report past 90 tool
-calls.** After M1, give a revised estimate of tool calls and tokens for M2–M5.
+**Next: finish M1, then M3 (it needs no runtime), M2, M4, M5.** M1 passed its 90-call limit
+(about 115 calls used) and the user chose to hand off here. **Any further M1 limit is the
+user's to set; if their first message gives none, ask.** Revised estimates for M2–M5 are in
+`docs/PHASE_4.md`. To keep calls down: read a file once in a larger piece, apply several
+edits from one script. Still to do in M1:
+1. Why CROSS doesn't leave the language screen. The log's only pad line is PADMAN's load;
+   `PS2PORT_PAD` is parsed in `ps2_pad.cpp`. Not known yet whether the game reads the pad at
+   all or reads a buffer the stub doesn't fill.
+2. A GIF packet log with hashes, as M2's reference (language screen, and the menu if item 1
+   gets there).
+3. Move the harness sources into the repo (nothing moved yet; no line over 200 characters in
+   them, so no embedded data tables):
+   - To a new `harness/`: `build.sh ctx_offsets.cpp eg_bisect.py eg_pipeline.sh
+     frame_pipeline.sh harness.h harness_count.h harness_fastgpr.h harness_fastmem.h
+     hwmodel.inc main.cpp make_harness.py shim.cpp`. `build_a64.sh` is unused; leave it.
+   - `gen*/` and `build/` stay in `private/third_party/trial/harness/`, so binary paths don't
+     change.
+   - `build.sh`: `src=` its own directory, `repo=$src/..`, `tp=$repo/private/third_party`,
+     `h=$tp/trial/harness`; flags `-I$src -I$h`; take `shim.cpp`, `main.cpp` and
+     `harness_count.h` from `$src`; drop the old `repo=` line.
+   - `eg_pipeline.sh`, `frame_pipeline.sh`: add `s=$root/harness`, use it for `build.sh` and
+     `make_harness.py`. `eg_bisect.py`: `harness/build.sh`. `make_harness.py`: LibC path is
+     `parents[1] / "private/third_party/PS2Recomp/..."`.
+   - Update `docs/PROVENANCE.md`, then run the generator check above (0 bytes, 2,861,449).
 
 ## History (older state; where it differs, the section above wins)
 

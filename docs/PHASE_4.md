@@ -95,3 +95,63 @@ frame (rule 6); screenshots only in test mode.
 Stop only under the rule in `CLAUDE.md`. Device scripts will log temperature and stop over
 85 C from the first M2 run. No screen control: reference pictures come from the software GS.
 Our harness sources aren't in git; at M1 they move into the repo (no game data in them).
+
+# M1 results so far (2026-11-06)
+
+Measured on the PC only: x86 in WSL, the runtime's software GS. Nothing here ran on the
+device, and the picture has not been compared with PCSX2 pixel by pixel.
+
+60 s boot with scripted CROSS presses from 15 s:
+
+| | Before the fix | After |
+|---|---|---|
+| Picture | all black | language screen from about 4 s |
+| VIF1 interrupts run | 0 | 2,492 |
+| PATH3 packets, bytes | 2, 304 | 2,494, 298,521,968 |
+| PATH1 packets, bytes | 20,587, 8.3 MB | 16,837, 6.8 MB |
+| TRXDIR writes | 0 | 4,984 |
+
+Changes (all in the runtime, `trial/ps2recomp-m1-runtime.patch`):
+- A VIFcode with the interrupt bit runs the game's INTC 5 handler (`0x2D3398`) in place when
+  it completes, on a scratch guest stack and context. Scheduler checkpoints can't unwind out
+  of it.
+- Reads of `VIF1_MARK` and `VIF1_CODE` return the VIF state, not the last CPU write. The
+  handler compares the two and aborts the transfer if they differ.
+- `processPendingTransfers` takes the VIF1 work list out first, because the handler's GIF kick
+  re-enters it.
+
+Open:
+- CROSS presses don't leave the language screen, so the menu has not been reached.
+- 24 of the 26 sampled frames are two different pictures (14 and 10) that differ across the
+  whole screen. Cause not looked at.
+- The frame sampled at 2 s is solid magenta at 640x448. Not looked at.
+- Texture traffic is about 120 KB per interrupt, about 40 a second, about 5 MB/s. The cost of
+  that on the device is not measured; M3 and M5 have to account for it.
+
+VIF1 chains from saved frames, for M4 (`scripts/vif_chain.py`, static walk, not a run):
+
+| | Gameplay (slot2+2) | Street (i01+5) |
+|---|---|---|
+| Tags, qwords | 5,780, 199,439 | 4,930, 164,821 |
+| MSCAL | 2,506 | 2,153 |
+| UNPACK vectors, bytes | 390,248, 2,912,668 | 314,421, 2,401,376 |
+| Vectors per MSCAL, mean | 155.7 | 146 |
+
+The gameplay chain has no DIRECT and 54 interrupt-flagged NOPs, each after a MARK.
+
+## Revised estimate for M2–M5
+
+M1 used about 115 tool calls and isn't finished (about 20–40 more), against a plan of 40–70.
+The revised column doubles the plan. That is simple scaling, not a fresh analysis of each
+milestone.
+
+| Milestone | Plan (calls) | Revised (calls) |
+|---|---|---|
+| M2 | 50–90 | 100–180 |
+| M3 | 40–70 | 80–140 |
+| M4 | 30–50 | 60–100 |
+| M5 | 30–60 | 60–120 |
+| Total | 150–270 | 300–540 |
+
+Tokens: roughly 0.5–1.5 million of new input and output, assuming 1.5–3k per call, plus the
+cached context re-read on each round trip. This is a rough calculation, not a measurement.
