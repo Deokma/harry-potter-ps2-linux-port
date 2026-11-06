@@ -6,6 +6,7 @@ struct R5900Context;
 #include "eegen_vu1.h"
 
 uint64_t g_egVu1Notes[2048];
+uint64_t g_egVu1Counts[2048];
 static inline void eg_vu1_note(int pc, eg_v4 v, uint32_t dest)
 {
     const eg_vi4 b = (eg_vi4)v;

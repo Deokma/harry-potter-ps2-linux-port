@@ -20,6 +20,8 @@
 #include <vector>
 
 extern uint64_t g_egVu1Notes[2048];
+extern uint64_t g_egVu1Counts[2048];
+extern bool g_ps2portVifGeneric;
 
 namespace
 {
@@ -152,6 +154,8 @@ int main(int argc, char **argv)
     static Packets interpPackets, nativePackets;
     static uint64_t calls = 0, mismatches = 0, cycles = 0, vertices = 0, misses = 0;
     static uint64_t diffCounts[6] = {};
+    static uint64_t dataHash = 1469598103934665603ull;
+    g_ps2portVifGeneric = std::getenv("VU1PLAY_VIF_GENERIC") != nullptr;
     static double vuMs = 0;
     static uint32_t reported = 0;
     static std::vector<uint8_t> nativeKick;
@@ -188,6 +192,8 @@ int main(int argc, char **argv)
             uint8_t *data = mem.getVU1Data();
             if (runNative && !runInterp)
             {
+                if (!timing)
+                    dataHash = fnv(data, data0.size(), dataHash);
                 const double t0 = nowMs();
                 if (!egVu1Run(nativeState, data, startPC / 8u, top, itop))
                     ++misses;
@@ -355,6 +361,7 @@ int main(int argc, char **argv)
     }
     std::printf("%s: %llu calls, %llu VU cycles, %llu vertices, %llu GIF packets, %.2f MB, hash %016llx, entries missed %llu\n", mode.c_str(), (unsigned long long)calls,
                 (unsigned long long)keptCycles, (unsigned long long)keptVertices, (unsigned long long)keptCount, keptBytes / 1048576.0, (unsigned long long)keptHash, (unsigned long long)misses);
+    std::printf("VU data memory hash at each call %016llx\n", (unsigned long long)dataHash);
     std::printf("last pass ms: total %.2f, VU %.2f, VIF and the rest %.2f\n", passMs, passVuMs, passMs - passVuMs);
     if (!vuTimes.empty())
     {
@@ -366,6 +373,12 @@ int main(int argc, char **argv)
     }
     if (keptVertices)
         std::printf("VU cycles per vertex %.1f, ns per vertex %.1f\n", static_cast<double>(keptCycles) / keptVertices, passVuMs * 1e6 / keptVertices);
+    if (const char *where = std::getenv("VU1PLAY_COUNTS"))
+    {
+        FILE *f = std::fopen(where, "wb");
+        std::fwrite(g_egVu1Counts, 8, 2048, f);
+        std::fclose(f);
+    }
     if (std::getenv("VU1PLAY_NOTES"))
         for (int pc = 0; pc < 2048; ++pc)
             if (g_egVu1Notes[pc])

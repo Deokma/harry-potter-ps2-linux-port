@@ -8,25 +8,40 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#endif
 
 // MAX and MINI compare the raw bits as sign and magnitude and hand on an operand untouched. Exact for anything,
-// and the game moves integers through them.
-static inline eg_vi4 eg_vu1_ordered(eg_v4 v)
-{
-    const eg_vi4 b = (eg_vi4)v;
-    return b ^ ((b >> 31) & 0x7FFFFFFF);
-}
-
+// and the game moves integers through them. A signed compare of the raw bits is right unless both are negative,
+// where it is reversed. (On equal operands the choice doesn't matter: same bits.)
 static inline eg_v4 eg_vu1_max(eg_v4 s, eg_v4 t)
 {
-    const eg_vi4 m = eg_vu1_ordered(s) > eg_vu1_ordered(t);
-    return (eg_v4)((((eg_vi4)s) & m) | (((eg_vi4)t) & ~m));
+    const eg_vi4 a = (eg_vi4)s, b = (eg_vi4)t;
+    const eg_vi4 m = (a > b) ^ ((a & b) >> 31);
+    return (eg_v4)((a & m) | (b & ~m));
 }
 
 static inline eg_v4 eg_vu1_min(eg_v4 s, eg_v4 t)
 {
-    const eg_vi4 m = eg_vu1_ordered(s) < eg_vu1_ordered(t);
-    return (eg_v4)((((eg_vi4)s) & m) | (((eg_vi4)t) & ~m));
+    const eg_vi4 a = (eg_vi4)s, b = (eg_vi4)t;
+    const eg_vi4 m = (a < b) ^ ((a & b) >> 31);
+    return (eg_v4)((a & m) | (b & ~m));
+}
+
+// Against a constant that isn't negative (a lane of vf0), the signed compare alone is exact.
+static inline eg_v4 eg_vu1_max_const(eg_v4 s, int32_t t)
+{
+    const eg_vi4 a = (eg_vi4)s;
+    const eg_vi4 m = a > t;
+    return (eg_v4)((a & m) | (t & ~m));
+}
+
+static inline eg_v4 eg_vu1_min_const(eg_v4 s, int32_t t)
+{
+    const eg_vi4 a = (eg_vi4)s;
+    const eg_vi4 m = a < t;
+    return (eg_v4)((a & m) | (t & ~m));
 }
 
 static inline float eg_vu1_norm(float value)
@@ -42,7 +57,11 @@ static inline float eg_vu1_norm(float value)
     return value;
 }
 
-static inline float eg_vu1_div(float num, float den)
+// These run per vertex in the light loops. The host's own modes already flush denormals, and a value the host can't
+// hold makes the result infinite or NaN, or (dividing by one) zero, so only then is the work done again, normalized.
+static inline bool eg_vu1_odd(float result) { return !(std::fabs(result) <= 3.4028234663852886e+38f); }
+
+__attribute__((noinline, cold)) static float eg_vu1_div_slow(float num, float den)
 {
     num = eg_vu1_norm(num);
     den = eg_vu1_norm(den);
@@ -51,15 +70,33 @@ static inline float eg_vu1_div(float num, float den)
     return eg_vu1_norm(num / den);
 }
 
-static inline float eg_vu1_sqrt(float value) { return eg_vu1_norm(std::sqrt(std::fabs(eg_vu1_norm(value)))); }
+static inline float eg_vu1_div(float num, float den)
+{
+    const float r = num / den;
+    return __builtin_expect(eg_vu1_odd(r) || r == 0.0f, 0) ? eg_vu1_div_slow(num, den) : r;
+}
 
-static inline float eg_vu1_ercpr(float value)
+__attribute__((noinline, cold)) static float eg_vu1_sqrt_slow(float value) { return eg_vu1_norm(std::sqrt(std::fabs(eg_vu1_norm(value)))); }
+
+static inline float eg_vu1_sqrt(float value)
+{
+    const float r = std::sqrt(std::fabs(value));
+    return __builtin_expect(eg_vu1_odd(r), 0) ? eg_vu1_sqrt_slow(value) : r;
+}
+
+__attribute__((noinline, cold)) static float eg_vu1_ercpr_slow(float value)
 {
     value = eg_vu1_norm(value);
     return eg_vu1_norm(value != 0.0f ? 1.0f / value : value);
 }
 
-static inline float eg_vu1_esum(eg_v4 v)
+static inline float eg_vu1_ercpr(float value)
+{
+    const float r = 1.0f / value;
+    return __builtin_expect(eg_vu1_odd(r) || r == 0.0f, 0) ? eg_vu1_ercpr_slow(value) : r;
+}
+
+__attribute__((noinline, cold)) static float eg_vu1_esum_slow(eg_v4 v)
 {
     float sum = 0.0f;
     for (int c = 0; c < 4; ++c)
@@ -67,11 +104,24 @@ static inline float eg_vu1_esum(eg_v4 v)
     return eg_vu1_norm(sum);
 }
 
-static inline float eg_vu1_erleng(eg_v4 v)
+static inline float eg_vu1_esum(eg_v4 v)
+{
+    const float r = v[0] + v[1] + v[2] + v[3];
+    return __builtin_expect(eg_vu1_odd(r) || r == 0.0f, 0) ? eg_vu1_esum_slow(v) : r;
+}
+
+__attribute__((noinline, cold)) static float eg_vu1_erleng_slow(eg_v4 v)
 {
     const float x = eg_vu1_norm(v[0]), y = eg_vu1_norm(v[1]), z = eg_vu1_norm(v[2]);
     const float len = std::sqrt(x * x + y * y + z * z);
     return eg_vu1_norm(len != 0.0f ? 1.0f / len : len);
+}
+
+static inline float eg_vu1_erleng(eg_v4 v)
+{
+    const float len = std::sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    const float r = 1.0f / len;
+    return __builtin_expect(eg_vu1_odd(r) || r == 0.0f, 0) ? eg_vu1_erleng_slow(v) : r;
 }
 
 // x86 gives 0x80000000 on overflow of either sign; the interpreter and aarch64 saturate.
@@ -85,24 +135,23 @@ static inline eg_vi4 eg_vu1_ftoi(eg_v4 v)
     return r;
 }
 
+static inline uint32_t eg_vu1_sum(eg_vi4 v)
+{
+#if defined(__aarch64__)
+    return vaddvq_u32(vreinterpretq_u32_s32(v));
+#else
+    return static_cast<uint32_t>(v[0] + v[1] + v[2] + v[3]);
+#endif
+}
+
 // Z (bits 0-3) and S (bits 4-7) by lane, x highest. U and O aren't produced: this game's FMEQ masks don't read them
 // (vu1gen --report lists the reads; vu1play --mode check compares the outcome).
 static inline uint32_t eg_vu1_mac(eg_v4 v, uint32_t dest)
 {
     const eg_vi4 b = (eg_vi4)v;
-    uint32_t mac = 0;
-    for (int c = 0; c < 4; ++c)
-    {
-        const uint32_t lane = 8u >> c;
-        if (dest & lane)
-        {
-            if ((static_cast<uint32_t>(b[c]) & 0x7FFFFFFFu) == 0u)
-                mac |= lane;
-            if (b[c] < 0)
-                mac |= lane << 4;
-        }
-    }
-    return mac;
+    const eg_vi4 z = (b << 1) == 0;
+    const eg_vi4 s = b < 0;
+    return eg_vu1_sum((z & eg_vi4{8, 4, 2, 1}) | (s & eg_vi4{0x80, 0x40, 0x20, 0x10})) & (dest * 0x11u);
 }
 
 // Compares as signed integers of the raw bits, as the interpreter: |fs.xyz| against |ft.w| with a denormal w as the largest denormal
@@ -111,15 +160,9 @@ static inline uint32_t eg_vu1_clip(eg_v4 fs, eg_v4 ft)
     const uint32_t wBits = static_cast<uint32_t>(((eg_vi4)ft)[3]);
     const int32_t limit = (wBits & 0x7F800000u) != 0u ? static_cast<int32_t>(wBits & 0x7FFFFFFFu) : 0x007FFFFF;
     const eg_vi4 s = (eg_vi4)fs;
-    uint32_t flags = 0;
-    for (int c = 0; c < 3; ++c)
-    {
-        if (s[c] > limit)
-            flags |= 1u << (c * 2);
-        if ((s[c] ^ static_cast<int32_t>(0x80000000u)) > limit)
-            flags |= 2u << (c * 2);
-    }
-    return flags;
+    const eg_vi4 above = s > limit;
+    const eg_vi4 below = (s ^ static_cast<int32_t>(0x80000000u)) > limit;
+    return eg_vu1_sum((above & eg_vi4{1, 4, 16, 0}) | (below & eg_vi4{2, 8, 32, 0}));
 }
 
 static inline int32_t eg_vu1_lane16(const uint8_t *qword, int lane)

@@ -20,7 +20,7 @@ case $target in
         link="-static -lpthread" ;;
     *) echo "target: x86 or aarch64" >&2; exit 2 ;;
 esac
-flags="-std=c++20 -O2 -ffp-contract=off -fno-math-errno -w $arch -I$src -I$out -I$repo/eegen -I$rt/include -I$rt/src/lib -I$rt/src/lib/Kernel -I$tp/PS2Recomp/ps2xIOP/include -I$tp/raylib-5.5/src -DPS2X_NO_RAYLIB"
+flags="-std=c++20 -O3 -ffp-contract=off -fno-math-errno -w $arch -I$src -I$out -I$repo/eegen -I$rt/include -I$rt/src/lib -I$rt/src/lib/Kernel -I$tp/PS2Recomp/ps2xIOP/include -I$tp/raylib-5.5/src -DPS2X_NO_RAYLIB"
 runtime="$rt/src/lib/gs/gs_frontend.cpp $rt/src/lib/gs/gs_cpu_backend.cpp $rt/src/lib/gs/ps2_gs_memory.cpp $rt/src/lib/gs/ps2_gif_arbiter.cpp $rt/src/lib/ps2_memory.cpp $rt/src/lib/ps2_vif1_interpreter.cpp $rt/src/lib/vu/ps2_vu1_core.cpp $rt/src/lib/vu/ps2_vu1_lower.cpp $rt/src/lib/vu/ps2_vu1_upper.cpp"
 own="$src/vu1play.cpp"
 if [ "${2:-}" = stub ]; then own="$own $src/vu1_stub.cpp"; else own="$own $src/vu1_native.cpp"; fi
