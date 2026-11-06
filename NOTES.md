@@ -109,7 +109,10 @@ More commands at the end of this file ("Commands that worked").
   upload from the VIF1 interrupt handler (`0x2D3398`), which the runtime never ran. It now
   runs in place when a flagged VIFcode completes. Details in `docs/PHASE_4.md`.
 
-**Next: M2 and M4, then M5.** M1 and M3 are done: `docs/PHASE_4.md`, "M1 result" and "M3 result". **M3's CPU cost is
+**Next: finish M4, then M2, then M5.** M1 and M3 are done; M4 is well along: `docs/PHASE_4.md`, "M4 so far". VU1 is translated (`eegen/vu1gen.py`), GIF packets match the
+interpreter on both saved frames, and on the device VU1 costs 50.0 ms (gameplay) and 28.6 ms (street), VIF another 48.4 and 39.0 ms. **The device dropped off the network during the
+interpreter run (second unexplained drop; ping fails). The user has to bring it back (command under History).** Then: rerun the check on the device, VIF fast path, profile the generated code,
+test vertex handoff. **M3's CPU cost is
 over budget and is the main risk now:** GIF parsing plus GL commands is 35-100 ms per 3D frame on one A53, against a
 33 ms frame. Options are in "M3 result"; handing vertices over directly from a translated VU1 (M4) looks the most
 promising and is untested. Keep calls down: read a file once in a larger piece, apply several edits from one script.
@@ -123,6 +126,13 @@ Dumps on the device (uncompressed dumps are in `D:\ps2port-data\raw\`, from `scr
 sh gsgles/build.sh gles-aarch64
 DEVICE_TIMEOUT=500 sh scripts/device_run.sh -g private/third_party/trial/gsplay/gsplay-gles-aarch64 gsgles/device_table.sh /d/ps2port-data/raw/N02_1.gs -- sh device_table.sh 8 N02_1 N02_1
 ```
+VU1 on the frames (WSL for the first two, Git Bash for the device):
+```
+python3 -I eegen/vu1gen.py private/vu1/slot2/micro.bin private/vu1/vu1_gen.inc --report
+sh vu1/build.sh x86 && private/vu1/vu1play-x86 private/vu1/slot2 --mode check --passes 2
+DEVICE_TIMEOUT=560 sh scripts/device_run.sh private/vu1/vu1play-aarch64 private/vu1/vu1-frames.tar vu1/device_table.sh -- sh device_table.sh check
+```
+The device has no `taskset`: `VU1PLAY_CORE=N` pins vu1play itself. Rebuild for the device with `sh vu1/build.sh aarch64`.
 Reference pictures and logs: `trial/reference/`. Carry into M2: `docs/PHASE_4.md`, "Carry into M2".
 
 ## History (older state; where it differs, the section above wins)

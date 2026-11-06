@@ -402,3 +402,91 @@ milestone.
 
 Tokens: roughly 0.5–1.5 million of new input and output, assuming 1.5–3k per call, plus the
 cached context re-read on each round trip. This is a rough calculation, not a measurement.
+
+# M4 so far: VU1 translated (2026-11-06)
+
+**Status:** the whole microprogram is translated and its GIF packets match the interpreter on both saved frames. First device
+numbers are in. **VU1 plus VIF is over budget on a separate core,** and the VIF half is unoptimized runtime code. The device
+dropped off the network during the interpreter run (ping fails too), so the check on the device's own floats did not finish.
+Stopped there under the stop rule. Direct vertex handoff is not tested yet.
+
+## What exists
+
+- `scripts/vu1_extract.py` pulls one frame's VIF1 stream, VU1 memories and VIF registers out of a savestate
+  (`private/vu1/slot2`, `private/vu1/i01`; `vu1-frames.tar` for the device).
+- `vu1/vu1play.cpp` replays that stream with no game running, using the runtime's own VIF code: `--mode interp`, `native` or
+  `check`. `check` runs both on separate copies, call by call, and compares registers, data memory and packets.
+- `eegen/vu1gen.py` turns all of micro memory into one C++ function: 8 entries, 2,041 of 2,048 pairs reached, about 4,100 lines,
+  compiled in seconds. VF and VI are sequential, because the interpreter stalls any read of a write in flight. For what doesn't
+  stall (Q, P, MAC and clip flags, a branch right after an integer write) it follows the interpreter's timing along every path
+  (7,921 pipeline states) and fixes each read at translation time. No read depends on the path. 22 Q reads and 3 P reads really
+  do take the previous value while a newer one is in flight, so the timing work was needed.
+- `eegen/eegen_vu1.h` holds the helpers, `scripts/vu1_dis.py` lists micro memory.
+
+## Results
+
+| | Gameplay `slot2+2` | Street `i01+5` |
+|---|---|---|
+| MSCAL calls | 2,506 | 2,153 |
+| VU cycles, interpreter's count | 7,417,794 | 4,667,354 |
+| Vertices (XYZ registers in packets) | 134,974 | 107,658 |
+| VU cycles per vertex | 55.0 | 43.4 |
+| GIF packets, data | 4,965, 6.31 MB | 4,344, 5.06 MB |
+| Whole-frame packet hash, interpreter = translated, x86 | `dccff285...` | `e97301a0...` |
+| Same hash from translated code on the device | yes | yes |
+| Calls differing in GIF packets, x86 check | **0** of 2,506 | **0** of 2,153 |
+| Calls differing elsewhere (data memory, ACC, sometimes P) | 83 | 108 |
+| **Device: VU1, translated, one thread, 1.416 GHz, median of 11** | **50.0 ms** (371 ns per vertex) | **28.6 ms** (265 ns per vertex) |
+| **Device: VIF, the runtime's generic code** | **48.4 ms** | **39.0 ms** |
+| **Device: both on one core** | **98.4 ms** | **67.6 ms** |
+| Frame budget | 33.3 ms | 50 ms |
+| x86: interpreter / translated, VU only (not device timings) | 1,893 / 5.4 ms | 1,194 / 3.4 ms |
+
+Spread over the 11 passes was under 1 %. Temperature was 58 C at the start of that run; no end reading, since the device dropped.
+Packets were only copied to a ring in the timed passes, as a queue to a GS thread would.
+
+The docs held no numeric VU1 estimate to compare with. These are the first real figures.
+
+## What the numbers mean
+
+- **Translated VU1 runs at about the PS2's own speed on one A53:** 6.7 ns per VU cycle against 6.8 ns at 147.5 MHz. It's a first
+  version with no tuning and no profile yet.
+- **VIF is the easy half.** 48.4 ms over 390,248 unpacked vectors is 124 ns each, from a generic loop. A fast path should remove
+  most of it, but that's an expectation, not a measurement.
+- **VU1 alone is still over in gameplay:** 50 ms against 33.3 ms, and under in the street (28.6 ms against 50 ms).
+- **By the interpreter's own count, that gameplay frame takes the PS2 50 ms of VU1 time,** so it can't have run in 33 ms there unless
+  the count is too high. Either this frame runs at 20 fps on the PS2 or the cycle model overstates. Not settled; it decides
+  whether 33.3 ms is the right budget for it.
+
+## Two findings
+
+**The interpreter was wrong, and the translated code showed it.** The game passes FBMSK along as an integer with
+`MINIbc.y vf3, vf0, vf4.x`. The interpreter normalized it to `ff7fffff`. The game's own GS dump (`I01_0.gs`, from PCSX2) has
+`ffffff00`, `ffff00ff` and `ff00ffff`, about 9,633 times each, which is what the translated code gave. So the three lighting passes
+per colour channel were getting a wrong mask under the interpreter. `ps2_vu1_upper.cpp` now compares raw bits and hands the operand on
+untouched, for VU1 only: VU0 stays as it was, so its byte-for-byte checks still mean the same. Fixing it also changed the frame's
+output (4,464 to 4,965 packets on `slot2`), since the microcode's control flow depends on those values.
+
+**"Every call matches" holds for packets, not for all state.** The 83 and 108 calls above differ in data memory and ACC, and sometimes P,
+but not in packets or VF. The sites sit in the pipelined vertex loop (`0x34a`-`0x36b`) and take integer bits into FMAC operations: the
+interpreter normalizes them, the translated code passes the NaN bits on. It looks like read-ahead past the end of the vertex list. In
+these two frames it never reaches a packet: the translated code running alone, with nothing carried over from the interpreter, gives
+the same whole-frame hash. Other scenes could differ, which only more frames can show. Normalizing every operand would be exact but
+costs on every operation.
+
+## Not done
+
+- The interpreter and the check on the device's own floats: lost with the connection. The device's translated hashes equal the x86
+  ones, which covers the packets but not the per-call comparison.
+- A profile of the generated code on the A53. Candidates: writes nobody reads (ACC, lanes), loading and saving all registers on each of
+  2,500 calls, MAX / MINI cost.
+- VIF fast path.
+- Direct vertex handoff to the renderer. `SubmitPackedStrip` already decodes close to directly, so the gain may be smaller than first
+  hoped; it has to be measured.
+- Splitting VU1 work over two cores: calls are ordered but mostly independent. Untested.
+- Micro memory is taken as fixed. The real runtime must hash it and fall back to the interpreter on a mismatch or an unknown entry.
+
+Device command, from Git Bash:
+```
+DEVICE_TIMEOUT=560 sh scripts/device_run.sh private/vu1/vu1play-aarch64 private/vu1/vu1-frames.tar vu1/device_table.sh -- sh device_table.sh check
+```
