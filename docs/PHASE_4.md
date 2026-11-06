@@ -534,3 +534,62 @@ DEVICE_TIMEOUT=400 sh scripts/device_run.sh private/vu1/vu1play-aarch64 private/
 The connection dropped twice during device runs. The device had not rebooted either time (uptime 3.7 and 4 hours, 53 C), so it was the network.
 `scripts/device_detach.sh` starts a run with `nohup` and polls for it, which survives that. `scripts/device_run.sh` prints "DEVICE LOST ... (reboot?)" for any lost
 connection: check uptime before calling it a reboot.
+
+# M2 result: the whole game on the device, headless (2026-11-07)
+
+**Done:** the game runs on the RG40XX H from its own ELF: boot, language screen, WB logo, loading screen, cutscene, main menu. Everything is translated, EE through
+eegen, VU0 and VU1 through vu0gen and vu1gen, with the IOP emulated and the files read from `/userdata/ps2bench/game`. There's no display yet: the software GS still draws, 2 s
+in every 20, for reference pictures. Audio and pad are stubbed, with scripted presses.
+
+## What exists
+
+`runner/` builds the runner without CMake or raylib.
+- `gen.sh` generates eegen's 5,496 functions (of 5,708: 127 stay native, 85 eegen refuses or skips), and the VU0 and VU1 code. `build.sh x86|aarch64` compiles and links, 70 MB stripped.
+- `native_hooks.cpp` puts eegen's functions in the runtime's table and takes MSCAL and VCALLMS from the interpreter. A microprogram runs translated only while the reachable part of micro memory equals the
+  snapshot it was made from. Otherwise the interpreter takes over and the registers move across. `PS2PORT_NO_EG`, `PS2PORT_NO_VU0` and `PS2PORT_NO_VU1` turn each part off.
+- `host/raylib.h` stands in for raylib: same names, no window, input or audio. A frame still lands in memory, so `PS2PORT_FRAME_DIR` works (PPM content).
+- `device_boot.sh` is one boot on the device, `try.sh` one boot on the PC, `scripts/gif_log_compare.py` and `scripts/gif_raw_diff.py` compare packets.
+
+## Results
+
+Device, 120 s, `CROSS@5+0.3,START@40+3`, draw window 2/20 (`boot-010004`):
+
+| | |
+|---|---|
+| Reached | main menu, from about 61 s to 76 s, then M1's 30 s idle timeout, same as the PC |
+| Translated code in use | 5,496 eegen functions; VU0 and VU1 micro memory equal the snapshots |
+| Presents | 720 at 19.6 s, 1,440 at 33.9 s, 2,160 at 49.2 s, 2,880 at 83.4 s, 3,600 at 117.3 s |
+| Temperature | start 58.3 C, peak 65.0 C |
+| Crashes, reboots | none |
+
+Presents are the host's own loop, not game frames: 21 per second on the menu is mostly the software path copying the frame out. **This is not the game's frame time, which M5 measures.**
+
+| Compared with | Frames | GIF packets |
+|---|---|---|
+| PC, same translated code | **menu frames `5cad64` and `62af47` and the final frame byte-identical**, from A53 NEON and x86 SSE | static stretches 97-100 % of packets in common; animated stretches differ |
+| PC, all translated code off (baseline) | menu differs in 16-18 of 229,000 pixels by more than 8, mean difference 0 | baseline's packets found on the device: 90 % on PATH1, 100 % on PATH3, by weight; 25 % and 100 % of distinct hashes |
+| PC baseline against PC translated, for scale | same as above | 91 % and 100 % by weight; 25 % and 100 % of distinct hashes |
+| Two PC boots with different parts on, for scale | | 79-90 % by weight, 18-34 % of distinct hashes |
+
+So, by hash, the device is as close to the baseline as two PC boots are to each other. **That is not proof of sameness in animated scenes.** Hashes can't say much there: two boots sample an
+animation at different moments. The device's log also has many more distinct hashes (19,457 on PATH1 against 2,432-4,546 on the PC), almost all in the middle of the run, in packets of 2-3 KB. Raw dumps
+of those stretches show the same kind of packet on both machines, mostly distinct, with positions and texture coordinates changing. The likeliest reason is a looping animation sampled at a varying step on
+the device and a steady one on the PC, but that wasn't shown. A fixed clock would settle it, and wasn't built. M1's "not decided" is settled this way: by hash set, plus byte-identical static frames.
+
+## What it took
+
+- **eegen had no loop checkpoints,** and its header said so ("preemption needs its own design later"). A replayed frame never needed them. The first boot sat on the loading screen, a thread spinning on a flag
+  that the loader, never scheduled, would have set. Turning parts off one at a time pinned it on eegen, with VU0 and VU1 both fine. `eegen --checkpoints` now counts down a shared budget on each taken backward branch and asks the
+  scheduler every 64th (2,048 charged cycles, as PS2Recomp's code charges 32 per branch). If the scheduler says so, the function leaves with `ctx->pc` at the loop head, and PS2Recomp's function takes over from there when the thread
+  next runs. 1,627 functions have loops, and every loop head has a resume entry. Without the flag, eegen's output is byte for byte what it was, all 5,496 functions compared, so the replay checks still stand. **The replay frame's 24.5 ms was
+  measured without this cost.** Not re-measured; expected to be small.
+- **Three pairs at the end of VU1 micro memory differ from the snapshot** (`0x7fd`-`0x7ff`), holding whatever was there before the upload. The program can't reach them, so the comparison now looks only at reachable pairs.
+- **The cross toolchain's glibc is newer than the device's.** `atan2f` and `log10f` went to `GLIBC_2.43` while the device has 2.40; `host/glibc_compat.h` binds the old versions.
+- The black screen at about 75 s looked like a bug. It's M1's idle timeout, in every configuration: all reach the same final frame `b33d5e`.
+- Translated VU1 alone gets the game 60 % further in the same time on the PC.
+
+## Not done
+
+- eegen still runs without float groups (`--no-float-groups`), because the mode switches between eegen's code and the runtime's aren't in the runner. The 24.5 ms replay figure had them, so expect the main frame to be slower until they're in.
+- `STREAM.IRX` still runs in the emulated IOP; its cost on the device hasn't been separated out.
+- New Game was not tried on the device.

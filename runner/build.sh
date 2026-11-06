@@ -18,7 +18,7 @@ case $target in
     x86) cxx=g++; arch="-msse4.1"; link="-ldl -lpthread" ;;
     aarch64)
         cxx=aarch64-linux-gnu-g++
-        arch="-march=armv8-a+fp+simd+crypto+crc -mtune=cortex-a53 -DUSE_SSE2NEON -I$tp/sse2neon"
+        arch="-march=armv8-a+fp+simd+crypto+crc -mtune=cortex-a53 -DUSE_SSE2NEON -I$tp/sse2neon -include $src/host/glibc_compat.h"
         # the device's libstdc++ is older, as for gsplay
         link="-static-libstdc++ -static-libgcc -ldl -lpthread" ;;
     *) echo "target: x86 or aarch64" >&2; exit 2 ;;

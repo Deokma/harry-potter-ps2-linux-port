@@ -109,8 +109,7 @@ More commands at the end of this file ("Commands that worked").
   upload from the VIF1 interrupt handler (`0x2D3398`), which the runtime never ran. It now
   runs in place when a flagged VIFcode completes. Details in `docs/PHASE_4.md`.
 
-**Next: finish M2 (the runner on the device), then M5.** On the PC the runner already reaches the menu through eegen and translated VU0, VU1 (`runner/`). M1, M3 and M4 are done: `docs/PHASE_4.md`, "M1 result", "M3 result", "M4 result". VU1 is translated (`eegen/vu1gen.py`), GIF packets match the
-interpreter on both saved frames, on the device too. Device cost: VU1 28.3 ms (gameplay) and 17.7 ms (street), VIF another 10.6 and 8.8 ms.
+**Next: M5, the join.** M1 to M4 are done: `docs/PHASE_4.md`, "M1 result", "M3 result", "M4 result", "M2 result". The whole game runs on the device, headless, to the menu, through eegen and translated VU0 and VU1 (`runner/`), with menu frames byte-identical to the PC's. VU1 costs 28.3 ms (gameplay) and 17.7 ms (street) on the device, VIF another 10.6 and 8.8 ms.
 **The GS path's CPU cost is over budget and is the main risk now:** 35-100 ms per 3D frame on one A53, against a 33 ms frame. Direct vertex handoff costs about 1 ms and can save at most
 14-17 ms of it, so it won't close the gap alone: parsing is a quarter to a third, the rest is VRAM and textures, libc and the driver ("M4 result"). A thread split is the other half. Keep calls down: read a file once in a larger piece, apply several edits from one script.
 
@@ -122,6 +121,14 @@ Dumps on the device (uncompressed dumps are in `D:\ps2port-data\raw\`, from `scr
 ```
 sh gsgles/build.sh gles-aarch64
 DEVICE_TIMEOUT=500 sh scripts/device_run.sh -g private/third_party/trial/gsplay/gsplay-gles-aarch64 gsgles/device_table.sh /d/ps2port-data/raw/N02_1.gs -- sh device_table.sh 8 N02_1 N02_1
+```
+The whole game, in WSL unless it says Git Bash (`gen.sh` once, `build.sh` after any change, a full build takes minutes):
+```
+sh runner/gen.sh
+sh runner/build.sh x86 && sh runner/try.sh 130 "CROSS@5+0.3,START@40+3"
+sh runner/build.sh aarch64 && aarch64-linux-gnu-strip -o private/third_party/build-m2/aarch64/runner-aarch64 private/third_party/build-m2/aarch64/runner
+# Git Bash:
+DEVICE_TIMEOUT=170 sh scripts/device_detach.sh -g private/third_party/build-m2/aarch64/runner-aarch64 runner/device_boot.sh -- sh device_boot.sh 120 '"CROSS@5+0.3,START@40+3"' 2/20
 ```
 VU1 on the frames (WSL for the first two, Git Bash for the device):
 ```
