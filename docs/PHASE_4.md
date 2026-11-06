@@ -166,7 +166,7 @@ attempt patched `trial/out-b/`, but the runtime builds from `ps2xRuntime/src/run
 `171129` and `171626` still had a frozen Count, and the earlier note here that the fix was "not
 enough" was wrong.** With Count running the wait ends and the game goes past the card check.
 
-**Now: a spin in what looks like the movie player's first read, not solved.** The main thread sits
+**Then: a spin in what looks like the movie player's first read (settled in the next section).** The main thread sits
 in `0x2d5288`, `while (DAT_003a7824 < DAT_003a7838)` (68 of 73 samples), called from `0x2dd8e0`,
 which sets up IPU DMA. Calling it the movie player comes from reading the code; no movie has
 played. The counter is blocks read: `0x2d3830`, a completion callback registered through
@@ -206,7 +206,54 @@ Other notes: in these boots the frame sampled at 2 s is black at 512x447, not th
 sources moved to `harness/`; generator check after the move: 0 RDRAM bytes differ, 2,861,449
 instructions. `scripts/rpc_binds.py` lists a game's RPC binds and callers.
 
-Calls: limits of 40 and a self-set 20 are both used, so M1 stands at about 175.
+Calls at that point: about 175.
+
+# M1 continued: from the first movie read to the opening cutscene (2026-11-06)
+
+Measured on the PC only: x86 in WSL, the runtime's software GS, a `-O1` build without LTO. Nothing
+here ran on the device. Frames are sampled about every 2 s and compared by hash.
+
+| Boot | Added | How far it gets |
+|---|---|---|
+| `190538` | movie stub | WB logo, then asleep in the read of `RESOURCE\HPM01.HOG` |
+| `191333` | IOP allocator fix | loading screen, the bar stays empty, the picture is static |
+| `192107` | table entry for `0x2600e8` | bar fills, then the opening cutscene to its first subtitle |
+| `192341`, `192722` | START, then CROSS, repeated | same subtitle; unchanged from 122 s to 240 s |
+
+**Movies are stubbed (`scripts/ps2recomp_movie_stub.py`).** The play-movie function (`0x2dc178`) is a
+blocking loop: decode, draw a full-screen quad, call an optional callback, flip. `frontend.thp` plays
+with callback `0x1af300`, which looks like the menu; that is from reading the code, since the menu has
+not been seen. So the loop stays and only the work under it goes: video setup, audio setup and both
+teardowns do nothing, and decode reports "ended" for a movie with no callback and "still playing" for
+one with a callback. The movie picture is left out, as the plan allows.
+
+**PS2Recomp's IOP allocator never reused freed memory.** `IopMemory::allocate` searched upward from a
+cursor that only rises. Each opened file takes a 32 KB buffer, and `STREAM.IRX` frees it on close, but
+the addresses only climbed (`0x1ac4c0` to `0x1e1880` in 8 opens), and then a read request produced no
+CD read. It now searches first-fit from the start of the heap. The failed allocation itself was not
+logged; what shows it is that reads carry on after the fix. This also explains the movie stall above,
+which needed a larger block, so the "not solved" there is settled as far as the stub needs. The
+`sceCdGetReadPos` import was still worth adding.
+
+**A hole in the function map.** `0x2600e8` is a two-instruction function (`jr ra; move v0, a0`) merged
+into the end of `FUN_00260008`, so an indirect call from `0x2b6fc4` found no target. The log had said
+so all along (`[guest-branch:missing-target]`). With a table entry the loading bar fills. Why skipping
+that one call stopped the loading screen was not worked out. It is the only missing target in these
+boots, but other gaps could show up on code paths not yet run.
+
+**Still open: the cutscene stops on its first subtitle.** After `CUT\HPM01.HOG` the screen is black
+for about a minute, then a dim subtitle, a brighter one, and then no change for at least 118 s, with
+the main thread still flipping and PATH1 traffic going on (about 50 packets a second). START and CROSS
+don't skip it. A timeline driven by audio position, which the stubbed sound would never advance, would
+fit, but this has not been checked. Other than that, the only pictures so far are the ones named here.
+
+Traffic in `boot-20261106-192722`: PATH1 14,196 packets, 15.0 MB; PATH3 738 packets, 80.8 MB. Most of
+the PATH3 bytes come before the cutscene. **Still missing from M1's done-when:** a menu PNG, its GIF
+log, and which path draws the menu.
+
+**Build.** `private/third_party/build-fast/`, `-O1` without LTO: 11.5 min for a full compile, then
+about 70 s per change instead of 12 min. `build-runtime/` is now out of date. PC boot timings from
+`build-fast` say even less about the device than before.
 
 ## Revised estimate for M2–M5
 
