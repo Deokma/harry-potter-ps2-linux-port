@@ -33,6 +33,8 @@ recordings stay in `private/` (condition 4).
 | `eegen/vu0gen.py`, `eegen/eegen_vu0.h` | no code; semantics taken from PS2Recomp's VU interpreter | VU0 microprograms to host vector code (our decoder and tracing). Operand and result handling and the MADD / MSUB rounding were written to match the interpreter so results can be checked bit for bit; built against PS2Recomp's `R5900Context` |
 | `scripts/sample_profile.py` | no | |
 | `scripts/*` | no | `ps2recomp_trial.sh` and `compile_generated.sh` drive PS2Recomp's tools but contain none of its code |
+| `harness/main.cpp`, `shim.cpp`, `hwmodel.inc`, `harness*.h`, `ctx_offsets.cpp` | partly | replay harness, built against PS2Recomp's `R5900Context`, `PS2Runtime` and runtime headers, and it replays its generated code (kept in `private/`); `shim.cpp` stands in for parts of its runtime. Moved from `private/` without a line-by-line audit for copied code; a keyword search found only descriptive comments |
+| `harness/make_harness.py`, `build.sh`, `eg_pipeline.sh`, `frame_pipeline.sh`, `eg_bisect.py` | no | drive PS2Recomp's output and tools; `make_harness.py` copies generated code into `private/` at build time, none of it in the repo |
 | `docs/*` | no | describe PS2Recomp's behaviour from reading and running it |
 
 Update this table whenever code moves from `private/` into the repo or our
