@@ -3,7 +3,86 @@
 Running log: decisions, open questions, commands that worked.
 Phase reports live in `docs/PHASE_N.md`.
 
-## Current state and handoff (updated 2026-11-05)
+## Current state and handoff (2026-11-06)
+
+**A fresh session needs only this section and `docs/PHASE_4.md`.** Older state is under
+"History" below; read it only when a pointer here sends you there.
+
+**Goal now (user, 2026-11-06):** a thin slice to the title screen on the RG40XX H with
+real GLES picture, audio and input stubbed, no gameplay. No more scene measuring. Plan and
+milestones M1–M5: `docs/PHASE_4.md`. **Check with the user that the plan is approved, then
+start M1.**
+
+**Rules that changed:** stop only if (a) a measured main frame exceeds its budget (50 ms in
+the street, 33.3 ms elsewhere), (b) a decision from the user is needed, or (c) the device
+misbehaves (reboot, over 85 C); otherwise go on to the next milestone without asking. **No
+screen control at all**, so no new PCSX2 captures unless the user makes them. Don't push.
+Keep tool output short.
+
+**Done:**
+- EE main frame through eegen (5,500 of 5,708 functions) and VU0 through `eegen/vu0gen.py`
+  (13 of 18 entries, all live ones), checked against PCSX2 (PHASE_3 C7, C8). Main frame on
+  the device at 1.416 GHz:
+
+  | Frame | Guest instructions | Median | Budget | Same or close to PCSX2 |
+  |---|---|---|---|---|
+  | `frame-ntsc02r` | 2,861,449 | 24.5 ms | 33.3 ms | 94.9 % |
+  | `frame-ntsc03r` | 2,749,423 | 24.1 ms | 33.3 ms | 99.4 % |
+  | `frame-i01a` (street, 1 tick) | 6,805,423 | 38.4 ms | 50 ms | 96.8 % |
+  | `frame-i01b` (street, 2 ticks) | 7,145,301 | 39.7 ms | 50 ms | 98.6 % |
+
+- PC boot on PS2Recomp's runtime (trial) reaches the game's main loop, frames black: VU1
+  code never arrives (stop 6, PHASE_3 B3). That is where M1 starts.
+- PS2Recomp bugs fixed so far: `JR` / `JALR` old register, macro code writing `vf0`,
+  byte-at-a-time `memmove`. Replay stand-in now has a real clock (CP0 Count) and scratchpad
+  DMA, and resumes the main thread from its kernel-saved registers.
+
+**Not in git (`private/`, `D:\ps2port-data\`):**
+- `private/third_party/trial/harness/`: our replay harness (`main.cpp`, `shim.cpp`,
+  `hwmodel.inc`, `harness.h`, `make_harness.py`, `build.sh`, pipelines), plus generated
+  `gen/`, `gen_eg/` (hot set), `gen_eg_fg/` (whole program), `gen_vu0/`, `build/`.
+- `private/third_party/PS2Recomp/` (commit `e5636981`), changes in
+  `trial/ps2recomp-trial.patch`, `ps2recomp-vu-jr-fix.patch`, `ps2recomp-libc-memmove.patch`;
+  its generated code in `trial/out-b/`.
+- `trial/rec/frame-{ntsc02r,ntsc03r,i01a,i01b}.{in,out,vu0code,vu0data}`: checked frames.
+- `private/extract/SLUS-20826/files/`: disc files, 1.7 GB (`RESOURCE`, `MOVIES`, IRXs, ELF).
+- `private/ghidra/` (`hp.cvs`, `hp.toml`); `SLUS_208.26.c` and `.gzf` in the repo root are
+  git-ignored. The decompile has no game symbols but is good for reading control flow.
+- `D:\ps2port-data\`: `snapshots/{F01,I01,N01,N02,N03,PILOT}` GS dumps (F01 has the menu),
+  `savestates/` (slots 1–3 are the user's; `next-frame-2026-11-05/`,
+  `i01-street-2026-11-05/` are ours), `pcsx2-clean/`.
+
+**Rebuild (WSL, repo root), when only harness sources changed; `H=private/third_party/trial/harness`:**
+```
+REUSE=1 EG=1 EG_REUSE=1 sh $H/build.sh x86 count frame-v0     # binary: $H/build/harness-x86-count-frame-v0-eg
+REUSE=1 EG=1 EG_REUSE=1 EG_DIR=$H/gen_eg_fg HARNESS_DEFS=-DHARNESS_LEAN_DISPATCH sh $H/build.sh aarch64 time frame-v4
+```
+Generator check before any device timing (from `trial/rec`), must print 0 bytes and the exact count:
+```
+HARNESS_SKIP=0x2cd6a0 HARNESS_STOP_TIMER=2 HARNESS_VU0=3 timeout 100 ../harness/build/harness-x86-count-frame-v0-eg frame-ntsc02r 1
+```
+Device (Git Bash, settings in `.env`, key-based SSH on port 2222; after a reboot the user
+restarts SSH, command under History):
+```
+sh scripts/harness_device_run.sh $H/build/harness-aarch64-time-frame-v4-eg private/third_party/trial/rec/frame-ntsc02r 20 1416000 -- HARNESS_SKIP=0x2cd6a0 HARNESS_STOP_TIMER=2 HARNESS_PMU=1 HARNESS_VU0=3
+```
+More commands at the end of this file ("Commands that worked").
+
+**Traps:**
+- `harness/gen/` holds one variant at a time: v0 for x86 objects, v3 for aarch64 (left at
+  v3). Regenerate with `make_harness.py` before a batch has to recompile.
+- The x86 `-eg` binary has eegen's hot set (225 functions), the aarch64 one the whole
+  program. Test stop logic against whole-program behaviour: eegen calls directly, so table
+  changes don't reach it. That caused the one device reboot (cause not fully established).
+- PS2Recomp-only builds need `HARNESS_SKIP=0x2cd6a0`, or the vsync wait spins forever.
+- A full rebuild is about 35–45 min; run long builds in the background.
+
+**Next: M1** (`docs/PHASE_4.md`): first move our harness sources into the repo (no game data
+in them, update `docs/PROVENANCE.md`), then the PC boot from `scripts/ps2recomp_trial.sh`
+and `trial/ps2recomp-trial.patch`, then stop 6. Also from M2 on, `harness_device_run.sh`
+must log temperature and stop over 85 C (not done yet).
+
+## History (older state; where it differs, the section above wins)
 
 **Where we are:**
 - Phase 0 done (`docs/PHASE_0.md`).
