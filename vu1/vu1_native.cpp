@@ -23,7 +23,7 @@ namespace
     // XGKICK takes the whole packet at once, where the hardware (and the interpreter) copy one qword every two
     // cycles while the program carries on. A program that writes to the packet after kicking it would differ:
     // vu1play --mode check compares packets.
-    void eg_vu1_kick(const uint8_t *data, uint32_t qword)
+    void eg_vu1_kick(const uint8_t *data, uint32_t qword, uint64_t fp)
     {
         const uint32_t start = (qword * 16u) & 16383u;
         uint32_t pos = 0;
@@ -50,15 +50,18 @@ namespace
         }
         if (pos > 16384u)
             pos = 16384u;
+        eg_vu_leave(fp); // the receiver runs in the caller's float modes
         if (start + pos <= 16384u)
         {
             g_sink(data + start, pos);
+            eg_vu_enter();
             return;
         }
         const uint32_t first = 16384u - start;
         std::memcpy(g_wrap, data + start, first);
         std::memcpy(g_wrap + first, data, pos - first);
         g_sink(g_wrap, pos);
+        eg_vu_enter();
     }
 }
 

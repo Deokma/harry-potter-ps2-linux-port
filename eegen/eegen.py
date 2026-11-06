@@ -18,8 +18,12 @@ What it does differently from PS2Recomp's generator:
     function; the context is written back only before calls, syscalls and
     returns (registers that may be dirty there) and read again after them
     (registers live there), from a dataflow pass over the function;
-  - no per-instruction pc stores, no loop checkpoints (as the quick variant
-    v4 of the trial; preemption needs its own design later);
+  - no per-instruction pc stores; loop checkpoints only with --checkpoints: a
+    whole game needs them, since a guest thread spinning on a flag must let the
+    one that sets it run, and a replayed frame doesn't. A backward branch taken
+    counts down a budget; every 64th asks the scheduler (eeCheckpointDue) and,
+    if it says so, leaves with ctx->pc at the loop head, which PS2Recomp's
+    function for that address takes over from when the thread runs again;
   - calls go straight to the callee's C++ function (no table lookup); jal to
     an address that is not a known function start, and jalr, go through the
     runtime's dispatchGuestBranch as before;
@@ -333,7 +337,7 @@ def translate(addr, w, hw):
         if w == 0x42000039:
             return op_("di", "ctx->cop0_status &= ~0x10000;")
         if rs == 0 and rd == 9:
-            return op_("mfc0", set_s32(rt, "(int32_t)ctx->cop0_count"), (), gpr(rt))
+            return op_("mfc0", set_s32(rt, "(int32_t)ps2portReadCount(ctx)" if RUNTIME_COUNT else "(int32_t)ctx->cop0_count"), (), gpr(rt))
         raise Unsupported("cop0")
 
     if op == 0x11:
@@ -497,7 +501,8 @@ def mix_class(mn):
 class Node:
     """A step of the emitted function. kinds: op, cjump, jump, switch (local
     control flow), sync (call / syscall / break: the context is written back
-    before and read after), exit (leaves the function)."""
+    before and read after), exit (leaves the function), check (a loop
+    checkpoint: leaves the function only if the scheduler asks)."""
 
     def __init__(self, kind, code="", uses=(), defs=(), targets=(), fall=True, **extra):
         self.kind, self.code = kind, code
@@ -520,11 +525,15 @@ class Program:
         hi = max(e for _, e in self.funcs)
         self.tables = jump_table_targets(self.data, self.sections, lo, hi)
         self.ps2recomp = {}
+        self.entries = set()
         if args.ps2recomp_table:
             pat = re.compile(r"= (FUN_([0-9a-f]{8})_0x[0-9a-f]+); // 0x([0-9a-f]+)")
             for m in pat.finditer(Path(args.ps2recomp_table).read_text()):
+                self.entries.add(int(m.group(3), 16))
                 if int(m.group(2), 16) == int(m.group(3), 16):
                     self.ps2recomp[int(m.group(3), 16)] = m.group(1)
+        self.checkpoints = args.checkpoints
+        self.no_entry = set()  # loop heads with nowhere to resume: no checkpoint there
         self.skip = {int(x, 16) for x in args.skip.split(",")} if args.skip else set()
         self.native = set()
         if args.native:
@@ -611,17 +620,36 @@ def build_nodes(prog, start, end):
     def exit_to(t, into):
         into.append(Node("exit", fall=False, how="jump", target=t))
 
-    def goto(t, into):
+    def wants_check(t, frm):
+        """A taken backward branch, in a build with checkpoints, to where the thread can resume."""
+        if not prog.checkpoints or frm is None or t > frm:
+            return False
+        if t not in prog.entries:
+            prog.no_entry.add(t)
+            return False
+        return True
+
+    def goto(t, into, frm=None):
         """Local jump, or a node leaving the function."""
         if start <= t < end and (t in starts or t in delay_targets):
+            if wants_check(t, frm):
+                into.append(Node("check", target=t))
             into.append(Node("jump", targets=[t], fall=False))
         else:
             exit_to(t, into)
 
-    def cjump(cond, t, into, negate=False, uses=()):
+    def cjump(cond, t, into, negate=False, uses=(), frm=None):
         c = f"!({cond})" if negate else cond
         if start <= t < end and (t in starts or t in delay_targets):
-            into.append(Node("cjump", c, uses, targets=[t]))
+            if wants_check(t, frm):
+                lab = f"C_{t:08x}_{len(out_of_line)}"
+                into.append(Node("cjump", c, uses, targets=[lab]))
+                n = Node("check", target=t)
+                n.label = lab
+                out_of_line.append(n)
+                out_of_line.append(Node("jump", targets=[t], fall=False))
+            else:
+                into.append(Node("cjump", c, uses, targets=[t]))
         else:
             lab = f"X_{t:08x}_{len(out_of_line)}"
             into.append(Node("cjump", c, uses, targets=[lab]))
@@ -638,7 +666,7 @@ def build_nodes(prog, start, end):
             if i.kind == "branch":
                 nodes.append(Node("op", count(i) + f"c_{a:x} = {i.cond};", i.uses, temp=f"bool c_{a:x}"))
                 plain(d, nodes, delay=True)
-                cjump(f"c_{a:x}", i.target, nodes)
+                cjump(f"c_{a:x}", i.target, nodes, frm=a)
                 if not (start <= ret < end):
                     exit_to(ret, nodes)
             elif i.kind == "likely":
@@ -648,11 +676,11 @@ def build_nodes(prog, start, end):
                     nodes.append(Node("op", count(i)))
                     cjump(i.cond, ret, nodes, negate=True, uses=i.uses)
                 plain(d, nodes, delay=True)
-                goto(i.target, nodes)
+                goto(i.target, nodes, frm=a)
             elif i.kind == "jump":
                 nodes.append(Node("op", count(i)))
                 plain(d, nodes, delay=True)
-                goto(i.target, nodes)
+                goto(i.target, nodes, frm=a)
             elif i.kind == "jal":
                 nodes.append(Node("op", count(i) + f"r31 = 0x{ret:x}ull;", (), {"r31"}))
                 plain(d, nodes, delay=True)
@@ -737,6 +765,9 @@ def dataflow(nodes):
                 o |= lin[s]
             if n.kind in ("sync", "exit"):
                 i = n.uses | din[k]
+            elif n.kind == "check":
+                # what it writes back if it leaves, and what comes after if it doesn't
+                i = n.uses | din[k] | o
             else:
                 i = n.uses | (o - n.defs)
             if i != lin[k] or o != lout[k]:
@@ -868,6 +899,9 @@ def emit_group(nodes, s, e, gid):
     return lines
 
 
+RUNTIME_COUNT = False
+
+
 def call_other(prog, fn):
     """A call into the runtime's code (PS2Recomp's functions, native stubs)
     runs with the FPU in PS2Recomp's mode."""
@@ -931,6 +965,8 @@ def emit_function(prog, start, end):
             else:
                 line.append(f"ctx->pc = 0x{e['addr']:x}u; runtime->handleBreak(rdram, ctx);")
             line.append(reload(lout[k]))
+        elif n.kind == "check":
+            line.append(f"if (EG_LOOP_DUE(runtime)) {{ {spill(din[k])} ctx->pc = 0x{n.extra['target']:x}u; return; }}")
         elif n.kind == "exit":
             line.append(spill(din[k]))
             e = n.extra
@@ -986,7 +1022,11 @@ def main():
     ap.add_argument("--skip", default="")
     ap.add_argument("--hardware-semantics", action="store_true")
     ap.add_argument("--no-float-groups", action="store_true")
+    ap.add_argument("--runtime-count", action="store_true", help="read Count from the runtime (ps2portReadCount), not from the context")
+    ap.add_argument("--checkpoints", action="store_true", help="loop checkpoints, which a whole game needs")
     args = ap.parse_args()
+    global RUNTIME_COUNT
+    RUNTIME_COUNT = args.runtime_count
     prog = Program(args)
     ends = dict(prog.funcs)
     wanted = []
@@ -1037,6 +1077,8 @@ def main():
         for a, r in sorted(refused.items()):
             f.write(f"refused 0x{a:08x}: {r}\n")
     print(f"translated {len(prog.ours)} of {len(wanted)} functions; {dict(total)}")
+    if prog.checkpoints:
+        print(f"loop heads without a resume entry, so no checkpoint: {sorted(hex(t) for t in prog.no_entry)[:12]} ({len(prog.no_entry)})")
     if reasons:
         print("refused:", "; ".join(f"{r} x{n}" for r, n in reasons.most_common(12)))
 

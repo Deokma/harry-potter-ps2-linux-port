@@ -8,6 +8,11 @@
 // the out-of-line path); see docs/PROVENANCE.md.
 #pragma once
 
+#include <cstdint>
+
+struct R5900Context;
+uint32_t ps2portReadCount(R5900Context *); // the runtime's; only code built with --runtime-count calls it
+
 #include "ps2_runtime.h"
 #include "ps2_runtime_macros.h"
 
@@ -319,6 +324,16 @@ EG_INLINE uint32_t eg_cvt_w_s(float f)
         return static_cast<uint32_t>(static_cast<int32_t>(f));
     return (b & 0x80000000u) ? 0x80000000u : 0x7FFFFFFFu;
 }
+
+// Loop checkpoints (eegen --checkpoints): most backward branches only count down. The budget is shared and not atomic, since at
+// most a checkpoint moves if two threads race on it. 32 cycles per branch is what PS2Recomp's code charges.
+inline uint32_t eg_loop_budget = 64u;
+__attribute__((noinline, cold)) inline bool eg_loop_ask(PS2Runtime *runtime)
+{
+    eg_loop_budget = 64u;
+    return runtime->eeCheckpointDue(64u * 32u);
+}
+#define EG_LOOP_DUE(runtime) (EG_UNLIKELY(--eg_loop_budget == 0u) && eg_loop_ask(runtime))
 
 // a function the generated code makes known to the runtime
 struct EgFunction

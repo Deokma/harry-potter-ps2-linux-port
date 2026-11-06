@@ -34,6 +34,8 @@ recordings stay in `private/` (condition 4).
 | `eegen/vu1gen.py`, `eegen/eegen_vu1.h` | no code; semantics and timing rules taken from PS2Recomp's VU interpreter | the whole VU1 microprogram to one C++ function (our decoder, path walk and control flow). The usage tables and the pipeline rules mirror `ps2_vu1_core.cpp` so that results can be checked byte for byte |
 | `vu1/` | partly | `vu1play.cpp` links PS2Recomp's `PS2Memory`, VIF, VU1 interpreter and GS frontend as the reference; the rest is ours |
 | `private/third_party/PS2Recomp/.../ps2_vu1_upper.cpp` | changed there | ours: on VU1, MAX and MINI compare raw bits and pass the operand on untouched |
+| `runner/` | partly | `build.sh` and `gen.sh` are ours and compile PS2Recomp's runtime and generated code; `native_hooks.cpp` is ours, built against its headers; `host/raylib.h` is ours, with the names of the raylib API the runtime calls |
+| `private/third_party/PS2Recomp/.../ps2_runtime.cpp`, `main.cpp` | changed there | ours: weak hooks for the translated code |
 | `scripts/sample_profile.py` | no | |
 | `scripts/*` | no | `ps2recomp_trial.sh` and `compile_generated.sh` drive PS2Recomp's tools but contain none of its code |
 | `harness/main.cpp`, `shim.cpp`, `hwmodel.inc`, `harness*.h`, `ctx_offsets.cpp` | partly | replay harness, built against PS2Recomp's `R5900Context`, `PS2Runtime` and runtime headers, and it replays its generated code (kept in `private/`); `shim.cpp` stands in for parts of its runtime. Moved from `private/` without a line-by-line audit for copied code; a keyword search found only descriptive comments |

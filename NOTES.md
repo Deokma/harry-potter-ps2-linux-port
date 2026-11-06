@@ -109,7 +109,7 @@ More commands at the end of this file ("Commands that worked").
   upload from the VIF1 interrupt handler (`0x2D3398`), which the runtime never ran. It now
   runs in place when a flagged VIFcode completes. Details in `docs/PHASE_4.md`.
 
-**Next: M2, then M5.** M1, M3 and M4 are done: `docs/PHASE_4.md`, "M1 result", "M3 result", "M4 result". VU1 is translated (`eegen/vu1gen.py`), GIF packets match the
+**Next: finish M2 (the runner on the device), then M5.** On the PC the runner already reaches the menu through eegen and translated VU0, VU1 (`runner/`). M1, M3 and M4 are done: `docs/PHASE_4.md`, "M1 result", "M3 result", "M4 result". VU1 is translated (`eegen/vu1gen.py`), GIF packets match the
 interpreter on both saved frames, on the device too. Device cost: VU1 28.3 ms (gameplay) and 17.7 ms (street), VIF another 10.6 and 8.8 ms.
 **The GS path's CPU cost is over budget and is the main risk now:** 35-100 ms per 3D frame on one A53, against a 33 ms frame. Direct vertex handoff costs about 1 ms and can save at most
 14-17 ms of it, so it won't close the gap alone: parsing is a quarter to a third, the rest is VRAM and textures, libc and the driver ("M4 result"). A thread split is the other half. Keep calls down: read a file once in a larger piece, apply several edits from one script.
