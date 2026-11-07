@@ -709,3 +709,55 @@ Git Bash, the run above (results in `panel-*/` on the device, then copied to `tr
 ```
 DEVICE_TIMEOUT=300 sh scripts/device_detach.sh -g private/third_party/build-m2/aarch64/runner-aarch64 runner/device_panel.sh -- sh device_panel.sh 260 '"CROSS@5+0.3,START@40+3,CROSS@58+1"' '"150 200 250"' PS2PORT_FRAME_EVERY=1200 PS2PORT_SAMPLE=samples.bin PS2PORT_SAMPLE_FROM=100 PS2PORT_SAMPLE_TO=135
 ```
+
+# Thread split (2026-11-07)
+
+The user's request after "Past New Game": "Thread split". **Done for the GS side: VIF1, VU1, the GIF and GS recording now run on their own thread. On the device a gameplay frame went from 107-113 ms to 67.7 ms (14.8 a second), still twice the 33.3 ms budget.** The IOP stays on the game thread.
+
+## How it works
+
+Counted first, in play (`[m5t]` lines): per game frame, one VIF1 DMA kick, about 40 VIF1 interrupts (each one makes the game's handler upload a texture through the GIF), and only 1 read and 7 writes of GS privileged registers. Almost all VIF1 and GIF register access happens inside those handlers. So the EE builds a frame, kicks it once, and can go on while another thread works through it.
+
+- **The GS-side thread** (`GsThread`, in `ps2_memory.cpp`) gets GIF and VIF1 DMA transfers in kick order, as copies taken at the kick, and runs VIF1, VU1 (translated), the GIF arbiter and the GS frontend behind them. The EE books each transfer complete at once, as before.
+- **What the EE reads or writes on that side waits until the thread is idle:** VIF1 and GIF registers, their FIFOs, VU1 memory. GS privileged registers (CSR, DISPFB and the rest) don't wait. On the hardware too they take effect at once, apart from the drawing stream. The frame latch already ran on the display thread, so nothing changes there.
+- **A VIF1 interrupt stops the thread.** It posts a wake to the EE scheduler and waits. The EE runs the game's handler in place at its next checkpoint, or while it is itself waiting on the thread, and may touch the GS side directly meanwhile. Texture uploads the handler kicks go back to the thread, which runs them first when it goes on, in the order the handler issued them. About 40 such hand-offs per frame; the EE never waited on the thread in play.
+- The two direct GIF image shortcuts at kick time step aside when the thread is on, so those transfers go through the queue in order.
+- On by default; `PS2PORT_GS_THREAD=0` turns it off. `[m5t]` reports jobs, hand-offs and EE waits per second.
+
+## Two bugs it exposed
+
+1. **The scheduler lost idle time when woken early.** With every EE thread asleep, it waits until the next deadline in host time and then moves EE time, and with it the IOP's, to that deadline. Woken earlier by an event, it moved time not at all. The thread's wakes then kept EE and IOP time almost still during loading, and a CD read, which completes after so many IOP cycles, never did: the loading bar stopped at half, in all 5 runs with uploads deferred (the thread then finished later, so its wakes landed while the EE slept). Now an early wake accounts the host time that passed, up to the deadline (`EeScheduler::waitForEvent`). Found by comparing stream RPCs and CD reads with a good run: the same requests, then one read that never completed.
+2. **The silent SPU2 moved voices by host time** while the IOP's sound driver watches them in IOP time. It now runs on the IOP's cycle count (36.864 MHz). This wasn't the loading stall's cause, as first suspected, but it removes a host-timing dependence. Cutscenes now follow emulated time, so their timeline on the device moved: at 150 s the panel shows Diagon Alley rather than Ollivanders.
+
+`PS2PORT_THROW_LOG=1` (a `__cxa_throw` wrapper in `display.cpp`, linked with `--wrap`) logs who throws C++ exceptions. Here it showed only `EeDispatcherTransfer`, the scheduler's normal thread switch, which settled one wrong lead.
+
+## Numbers
+
+Device, 1.416 GHz, the same shop with Harry in play at 215-262 s.
+
+| | One thread (`panel-122931`, `panel-123527`) | Thread split (`panel-142010`) |
+|---|---|---|
+| Game frame | 107-117 ms | **67.5-67.9 ms** (max 74-84) |
+| Frames per second | 8.6-9.3 | **14.7-14.8** |
+| Game thread | 100 % | 100 % |
+| GS thread | - | 67 % |
+| Main thread (GL) | 9-13 % | 14-15 % |
+| Peak temperature | 68.9 C | 72.5 C |
+
+Cutscenes: 57.6 ms at t = 181 s with the first version (no deferred uploads), 46 ms at 181 s with all of it (a different moment in the cutscene, since its timeline moved). Menu unchanged: 41.7 ms, game thread 21 %.
+
+**Where the game thread's time goes now** (1,471 samples in play): eegen guest code 20.1 %, libc 15.6 % (copies, mostly), IOP emulator 14.3 %, PS2Recomp guest code 14.1 %, other 13.3 %, PS2Memory 10.7 % (`Ps2IsSpecialAddress`, fast reads and writes, the register map), EE scheduler and runtime 9.1 % (`advanceEeTimers`, `checkpointDue`). **GS thread** (2,111 samples): translated VU1 44.9 %, GS 32.9 % (`fastUpload` 7.5 %, `SubmitPackedStrip` 6.8 %), PS2Memory 11.8 % (`processVIF1Data`), libc 6.5 %.
+
+## What's left
+
+Stop rule (a): 67.7 ms against 33.3 ms. The game thread is the limit, and the GS thread is at 67 %, so moving more work across helps only until the two meet. Estimates, not measurements:
+- **The IOP on its own thread** (14 %, about 10 ms) and the copies the EE makes of each DMA chain (part of libc's 15.6 %) would bring the game thread to roughly 50-55 ms.
+- The rest is guest code and the runtime around it, about 60 % of the game thread (40 ms). Reaching 33 ms needs that about 1.5-2 times faster: float groups (off in the runner), cheaper memory access for special addresses, fewer scheduler checks.
+- The GS thread at 45 ms per frame is next in line: VU1 alone is 20 ms.
+
+So, after this step, **the full game at full speed on this device is still not shown to be reachable.** The gap went from 3.2 times to 2 times the budget.
+
+Git Bash, the run above:
+```
+DEVICE_TIMEOUT=320 sh scripts/device_detach.sh -g private/third_party/build-m2/aarch64/runner-aarch64 runner/device_panel.sh -- sh device_panel.sh 262 '"CROSS@5+0.3,START@40+3,CROSS@58+1"' '"150 200 258"' PS2PORT_FRAME_EVERY=3000 PS2PORT_SAMPLE=samples.bin PS2PORT_SAMPLE_FROM=215 PS2PORT_SAMPLE_TO=255
+```

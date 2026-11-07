@@ -23,6 +23,8 @@ case $target in
         link="-static-libstdc++ -static-libgcc -ldl -lpthread" ;;
     *) echo "target: x86 or aarch64" >&2; exit 2 ;;
 esac
+# every C++ throw passes through display.cpp's logger (PS2PORT_THROW_LOG=1)
+link="$link -Wl,--wrap=__cxa_throw"
 common="-std=c++20 -ffp-contract=off -fno-math-errno -w $arch -DPS2X_HAS_FFMPEG=0 -DPS2X_ENABLE_IOP_RPC_TRACE=1 -I$src/host -I$rt/include -I$rt/src/lib -I$rt/src/lib/Kernel -I$iop/include -I$iop/src -I$src/../eegen -I$src/../vu1 -I$gen"
 
 rm -f "$out/jobs.txt"

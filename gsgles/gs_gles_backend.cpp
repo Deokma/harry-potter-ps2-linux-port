@@ -2167,6 +2167,19 @@ void GSGlesBackend::LatchFrame(const GSPresentationRequest &request)
     planPresent(request);
     evictTextures();
     evictCluts();
+    {
+        double targetBytes = 0.0, depthBytes = 0.0;
+        for (const auto &rt : m_rts)
+            targetBytes += static_cast<double>(rt->width) * rt->height * 4.0;
+        for (const auto &d : m_depths)
+            depthBytes += static_cast<double>(d.second->width) * d.second->height * 4.0;
+        m_held[0] = static_cast<double>(m_cluts.size());
+        m_held[1] = targetBytes;
+        m_held[2] = static_cast<double>(m_depths.size());
+        m_held[3] = depthBytes;
+        m_held[4] = static_cast<double>(m_contentTextures.size());
+        m_held[5] = static_cast<double>(m_textureBytes);
+    }
     m_execVertices.swap(m_vertices);
     m_execCommands.swap(m_commands);
     m_execUploads.swap(m_uploadPixels);
@@ -2379,17 +2392,9 @@ GSTransferSnapshot GSGlesBackend::GetTransferSnapshot() const
 
 void GSGlesBackend::countStats(double out[18]) const
 {
-    double targetBytes = 0.0, depthBytes = 0.0;
-    for (const auto &rt : m_rts)
-        targetBytes += static_cast<double>(rt->width) * rt->height * 4.0;
-    for (const auto &d : m_depths)
-        depthBytes += static_cast<double>(d.second->width) * d.second->height * 4.0;
-    out[12] = static_cast<double>(m_cluts.size());
-    out[13] = targetBytes;
-    out[14] = static_cast<double>(m_depths.size());
-    out[15] = depthBytes;
-    out[16] = static_cast<double>(m_contentTextures.size());
-    out[17] = static_cast<double>(m_textureBytes);
+    // what is held, as LatchFrame last saw it: the recording thread may be changing the containers now
+    for (int k = 0; k < 6; ++k)
+        out[12 + k] = m_held[k];
     out[0] = static_cast<double>(m_stats.runs);
     out[1] = static_cast<double>(m_stats.vertices);
     out[2] = static_cast<double>(m_stats.passes);

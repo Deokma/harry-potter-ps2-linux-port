@@ -13,6 +13,7 @@
 #include "runtime/ee_scheduler.h"
 
 #include <dirent.h>
+#include <dlfcn.h>
 #include <signal.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
@@ -25,12 +26,44 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <map>
+#include <typeinfo>
 #include <string>
 #include <thread>
 #include <vector>
 
+// PS2PORT_THROW_LOG=1: who throws C++ exceptions (the runtime and the IOP swallow many). The first 20, then every power of two:
+// type, message for the standard ones, and the throwing code's offset in the binary, for addr2line on the unstripped runner.
+extern "C" [[noreturn]] void __real___cxa_throw(void *object, std::type_info *type, void (*destroy)(void *));
+extern "C" [[noreturn]] void __wrap___cxa_throw(void *object, std::type_info *type, void (*destroy)(void *))
+{
+    static const bool on = std::getenv("PS2PORT_THROW_LOG") != nullptr;
+    if (on)
+    {
+        static std::atomic<uint64_t> count{0};
+        const uint64_t n = count.fetch_add(1, std::memory_order_relaxed);
+        if (n < 20u || (n & (n - 1u)) == 0u)
+        {
+            const char *name = type ? type->name() : "?";
+            const char *what = "";
+            if (std::strcmp(name, "St13runtime_error") == 0 || std::strcmp(name, "St12out_of_range") == 0 || std::strcmp(name, "St11logic_error") == 0 ||
+                std::strcmp(name, "St16invalid_argument") == 0)
+                what = static_cast<std::exception *>(object)->what();
+            void *from = __builtin_return_address(0);
+            Dl_info info{};
+            const uintptr_t base = dladdr(from, &info) ? reinterpret_cast<uintptr_t>(info.dli_fbase) : 0u;
+            std::fprintf(stderr, "[throw] #%llu %s \"%.80s\" from +0x%llx in %s\n", (unsigned long long)n, name, what,
+                         (unsigned long long)(reinterpret_cast<uintptr_t>(from) - base), info.dli_fname ? info.dli_fname : "?");
+        }
+    }
+    __real___cxa_throw(object, type, destroy);
+}
+
 void ps2portNativeCounts(uint64_t out[5]) __attribute__((weak));
+extern uint64_t g_ps2portTouch[10];
+extern uint64_t g_ps2portVif1Irqs;
+uint64_t ps2portGsThreadCounts(int which);
 
 namespace
 {
@@ -371,6 +404,24 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
         const double maxMs = g_frameMaxNs.exchange(0, std::memory_order_relaxed) / 1e6;
         std::fprintf(stderr, "[m5f] t=%.0f game frames/s %.1f, %.1f ms avg, %.1f max; up to 33.4 ms %llu, 50 %llu, 100 %llu, more %llu\n", seconds, marks * 1000.0 / span, marks ? span / marks : 0.0, maxMs,
                      (unsigned long long)buckets[0], (unsigned long long)buckets[1], (unsigned long long)buckets[2], (unsigned long long)buckets[3]);
+        {
+            static uint64_t touchBefore[11] = {};
+            uint64_t touch[11];
+            std::memcpy(touch, g_ps2portTouch, sizeof(g_ps2portTouch));
+            touch[10] = g_ps2portVif1Irqs;
+            double per[11];
+            for (int k = 0; k < 11; ++k)
+                per[k] = (touch[k] - touchBefore[k]) * 1000.0 / span;
+            std::memcpy(touchBefore, touch, sizeof(touch));
+            static uint64_t gsBefore[3] = {};
+            uint64_t gs[3];
+            for (int k = 0; k < 3; ++k)
+                gs[k] = ps2portGsThreadCounts(k);
+            std::fprintf(stderr, "[m5t] t=%.0f per s: gs priv r %.0f w %.0f; vif1 r %.0f w %.0f; gif regs %.0f; channel reads %.0f; vu1 mem %.0f; fifo %.0f; kicks vif1 %.0f gif %.0f; vif1 irqs %.0f; gs thread jobs %.0f handed %.0f waits %.0f\n", seconds,
+                         per[0], per[1], per[2], per[3], per[4], per[5], per[6], per[7], per[8], per[9], per[10], (gs[2] - gsBefore[2]) * 1000.0 / span,
+                         (gs[0] - gsBefore[0]) * 1000.0 / span, (gs[1] - gsBefore[1]) * 1000.0 / span);
+            std::memcpy(gsBefore, gs, sizeof(gs));
+        }
         std::fprintf(stderr, "[m5m] t=%.0f tick/s %.1f drawn/s %.1f; palettes %.0f, targets %.1f MB, depth %.0f (%.1f MB), textures %.0f (%.1f MB)\n", seconds, (tick - tickBefore) * 1000.0 / span, frames * 1000.0 / span,
                      gpu[12], gpu[13] / 1048576.0, gpu[14], gpu[15] / 1048576.0, gpu[16], gpu[17] / 1048576.0);
         tickBefore = tick;

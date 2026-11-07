@@ -215,6 +215,7 @@ private:
     std::unordered_map<uint64_t, ClutEntry> m_cluts;
     std::unordered_map<uint64_t, ClutEntry *> m_clutKeys;
     void evictCluts();
+    double m_held[6] = {}; // for countStats, taken in LatchFrame
 
     std::vector<HostVertex> m_vertices;
     std::vector<Command> m_commands;
