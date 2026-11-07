@@ -37,8 +37,15 @@ echo "$khz" > $cpu/scaling_max_freq
 sleep 1
 echo "clock $(cat $cpu/scaling_cur_freq) kHz (governor $(cat $cpu/scaling_governor))"
 
-timeout "$seconds" "$@" &
+# In a process group of its own, so that a stop reaches every process the command started: killing the shell alone
+# left the runner going (Phase 7 soak). TERM first (SDL turns it into a quit), KILL 3 s later.
+setsid timeout "$seconds" "$@" &
 pid=$!
+stopgroup() {
+    kill -TERM -- "-$pid" 2>/dev/null
+    sleep 3
+    kill -KILL -- "-$pid" 2>/dev/null
+}
 peak=$start
 stopped=0
 while kill -0 "$pid" 2>/dev/null; do
@@ -46,13 +53,15 @@ while kill -0 "$pid" 2>/dev/null; do
     [ "$t" -gt "$peak" ] && peak=$t
     if [ "$t" -gt "$limit" ] && [ "$stopped" = 0 ]; then
         echo "THERMAL STOP: $(celsius "$t") C while running, limit $(celsius "$limit") C"
-        kill "$pid"
+        stopgroup
         stopped=1
     fi
     sleep 1
 done
 wait "$pid"
 status=$?
+# whatever outlived the command (timeout stops only its own child)
+kill -KILL -- "-$pid" 2>/dev/null
 
 echo "clock after $(cat $cpu/scaling_cur_freq) kHz"
 echo "$old_max" > $cpu/scaling_max_freq

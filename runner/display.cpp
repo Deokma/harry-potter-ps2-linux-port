@@ -76,6 +76,7 @@ namespace
     std::atomic<uint64_t> g_frameBuckets[4] = {};
     std::atomic<int64_t> g_frameMaxNs{0};
     int64_t g_lastMarkNs = 0;
+    const int64_t g_processStartNs = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
 void ps2portPollFailed(uint32_t returnAddress)
@@ -92,6 +93,10 @@ void ps2portPollFailed(uint32_t returnAddress)
         {
         }
     }
+    // PS2PORT_FRAME_LOG=FILE: every game frame, milliseconds since the first and the frame's length (scripts/frame_stats.py)
+    static FILE *frameLog = std::getenv("PS2PORT_FRAME_LOG") ? std::fopen(std::getenv("PS2PORT_FRAME_LOG"), "w") : nullptr;
+    if (frameLog && g_lastMarkNs != 0)
+        std::fprintf(frameLog, "%.1f %.2f\n", (now - g_processStartNs) / 1e6, (now - g_lastMarkNs) / 1e6);
     g_lastMarkNs = now;
     g_frameMarks.fetch_add(1, std::memory_order_relaxed);
 }
@@ -295,6 +300,10 @@ namespace
     }
 }
 
+// runner/pad_sdl.cpp: the controller, on SDL, from this (the main) thread
+void ps2portPadInit();
+void ps2portPadPoll();
+
 bool ps2portDisplayInit(PS2Runtime &runtime)
 {
     if (!std::getenv("PS2PORT_DISPLAY"))
@@ -304,6 +313,7 @@ bool ps2portDisplayInit(PS2Runtime &runtime)
         std::fprintf(stderr, "[display] no GL: staying with the software GS\n");
         return false;
     }
+    ps2portPadInit();
     auto backend = std::make_unique<GSGlesBackend>();
     g_gles = backend.get();
     runtime.gs().setRasterBackend(std::move(backend));
@@ -321,6 +331,7 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
     static const uint64_t frameEvery = std::getenv("PS2PORT_FRAME_EVERY") ? std::strtoull(std::getenv("PS2PORT_FRAME_EVERY"), nullptr, 10) : 120u;
     static const bool wantStats = std::getenv("PS2PORT_M5_STATS") != nullptr;
 
+    ps2portPadPoll();
     // Each call is one vsync's frame; a swap may already have taken a vsync or more.
     const double waitStart = nowMs();
     uint64_t tick = runtime.eeScheduler().currentVSyncTick();
