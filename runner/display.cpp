@@ -2,6 +2,8 @@
 // On with PS2PORT_DISPLAY=1 (weak hooks in ps2_runtime.cpp).
 //
 // PS2PORT_FRAME_DIR with PS2PORT_FRAME_EVERY (vsyncs, default 120) saves what is shown as PPMs: the test mode's screenshots.
+// PS2PORT_SAMPLE=FILE, with PS2PORT_SAMPLE_FROM and PS2PORT_SAMPLE_TO (seconds): every thread's program counter each tick of CPU time, for
+// scripts/sample_threads.py.
 // PS2PORT_M5_STATS=1 logs a line every 5 s: game frames, where the time went, CPU by thread, temperature. A game frame is the game's
 // own: this NTSC executable counts vblanks at 0x328490 and resets the count when its main loop goes on, once it has reached the number
 // at 0x3A4FD8. So a frame's length in vsyncs against that number says whether it kept up.
@@ -11,9 +13,14 @@
 #include "runtime/ee_scheduler.h"
 
 #include <dirent.h>
+#include <signal.h>
+#include <sys/syscall.h>
+#include <sys/time.h>
+#include <ucontext.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -23,9 +30,131 @@
 #include <thread>
 #include <vector>
 
+void ps2portNativeCounts(uint64_t out[5]) __attribute__((weak));
+
 namespace
 {
     GSGlesBackend *g_gles = nullptr;
+
+    // Game frames, exactly: the vsync wait at 0x2cd6a0 first drains its semaphore with PollSema until it fails, so one failed poll returning
+    // to 0x2cd6c8 is one frame. How long each took, from one to the next, in buckets up to 33.4, 50, 100 ms and over.
+    std::atomic<uint64_t> g_frameMarks{0};
+    std::atomic<uint64_t> g_frameBuckets[4] = {};
+    std::atomic<int64_t> g_frameMaxNs{0};
+    int64_t g_lastMarkNs = 0;
+}
+
+void ps2portPollFailed(uint32_t returnAddress)
+{
+    if (returnAddress != 0x2cd6c8u)
+        return;
+    const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+    if (g_lastMarkNs != 0)
+    {
+        const int64_t d = now - g_lastMarkNs;
+        g_frameBuckets[d <= 33400000 ? 0 : d <= 50000000 ? 1 : d <= 100000000 ? 2 : 3].fetch_add(1, std::memory_order_relaxed);
+        int64_t m = g_frameMaxNs.load(std::memory_order_relaxed);
+        while (d > m && !g_frameMaxNs.compare_exchange_weak(m, d, std::memory_order_relaxed))
+        {
+        }
+    }
+    g_lastMarkNs = now;
+    g_frameMarks.fetch_add(1, std::memory_order_relaxed);
+}
+
+namespace
+{
+
+    // The profile: pairs of program counter and thread id
+    constexpr size_t kMaxSamples = 1u << 20;
+    uint64_t g_samples[kMaxSamples * 2];
+    volatile size_t g_sampleCount = 0;
+
+    void onSampleTick(int, siginfo_t *, void *uc)
+    {
+        if (g_sampleCount >= kMaxSamples)
+            return;
+        const ucontext_t *u = static_cast<const ucontext_t *>(uc);
+        const size_t k = g_sampleCount;
+#if defined(__aarch64__)
+        g_samples[k * 2] = u->uc_mcontext.pc;
+#else
+        g_samples[k * 2] = static_cast<uint64_t>(u->uc_mcontext.gregs[REG_RIP]);
+#endif
+        g_samples[k * 2 + 1] = static_cast<uint64_t>(syscall(SYS_gettid));
+        g_sampleCount = k + 1;
+    }
+
+    void sampling(double seconds)
+    {
+        static const char *path = std::getenv("PS2PORT_SAMPLE");
+        static const double from = std::getenv("PS2PORT_SAMPLE_FROM") ? std::atof(std::getenv("PS2PORT_SAMPLE_FROM")) : 0.0;
+        static const double to = std::getenv("PS2PORT_SAMPLE_TO") ? std::atof(std::getenv("PS2PORT_SAMPLE_TO")) : 1e9;
+        static int state = 0;
+        if (!path || state == 2)
+            return;
+        if (state == 0 && seconds >= from)
+        {
+            struct sigaction sa{};
+            sa.sa_sigaction = onSampleTick;
+            sa.sa_flags = SA_SIGINFO | SA_RESTART;
+            sigemptyset(&sa.sa_mask);
+            const itimerval tick{{0, 1000}, {0, 1000}};
+            sigaction(SIGPROF, &sa, nullptr);
+            setitimer(ITIMER_PROF, &tick, nullptr);
+            state = 1;
+        }
+        else if (state == 1 && seconds >= to)
+        {
+            const itimerval off{};
+            setitimer(ITIMER_PROF, &off, nullptr);
+            state = 2;
+            if (FILE *f = std::fopen(path, "wb"))
+            {
+                std::fwrite(g_samples, sizeof(uint64_t) * 2, g_sampleCount, f);
+                std::fclose(f);
+            }
+            // where the libraries are, and which thread is which
+            const std::string maps = std::string(path) + ".maps";
+            FILE *in = std::fopen("/proc/self/maps", "rb");
+            FILE *out = std::fopen(maps.c_str(), "wb");
+            if (in && out)
+            {
+                char buffer[4096];
+                size_t n;
+                while ((n = std::fread(buffer, 1, sizeof(buffer), in)) > 0)
+                    std::fwrite(buffer, 1, n, out);
+            }
+            if (in)
+                std::fclose(in);
+            if (out)
+                std::fclose(out);
+            const std::string names = std::string(path) + ".threads";
+            if (FILE *f = std::fopen(names.c_str(), "wb"))
+            {
+                if (DIR *dir = opendir("/proc/self/task"))
+                {
+                    while (dirent *e = readdir(dir))
+                    {
+                        const int tid = std::atoi(e->d_name);
+                        if (tid <= 0)
+                            continue;
+                        char path2[64], name[64] = {};
+                        std::snprintf(path2, sizeof(path2), "/proc/self/task/%d/comm", tid);
+                        if (FILE *c = std::fopen(path2, "r"))
+                        {
+                            if (std::fgets(name, sizeof(name), c))
+                                std::fprintf(f, "%d %s", tid, name);
+                            std::fclose(c);
+                        }
+                    }
+                    closedir(dir);
+                }
+                std::fclose(f);
+            }
+            std::fprintf(stderr, "[display] %zu samples written\n", static_cast<size_t>(g_sampleCount));
+        }
+    }
 
     double nowMs()
     {
@@ -163,6 +292,7 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
     runtime.gs().latchHostPresentationFrame();
     const double t1 = nowMs();
     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
+    sampling(seconds);
     if (shot)
     {
         g_gles->setCaptureNextPresent(false);
@@ -223,6 +353,34 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
     size_t used = 0;
     for (size_t i = 0; i < busy.size() && i < 5u && used + 40u < sizeof(cpu); ++i)
         used += static_cast<size_t>(std::snprintf(cpu + used, sizeof(cpu) - used, " %s:%.0f%%", busy[i].second.c_str(), 100.0 * busy[i].first * tickMs / span));
+    {
+        static uint64_t before[5] = {};
+        static double gpuBefore[12] = {};
+        static uint32_t tickBefore = 0;
+        uint64_t counts[5] = {};
+        double gpu[18] = {};
+        uint32_t tick = 0;
+        std::memcpy(&tick, runtime.memory().getRDRAM() + 0x38C210u, 4);
+        if (ps2portNativeCounts)
+            ps2portNativeCounts(counts);
+        g_gles->countStats(gpu);
+        const uint64_t marks = g_frameMarks.exchange(0, std::memory_order_relaxed);
+        uint64_t buckets[4];
+        for (int b = 0; b < 4; ++b)
+            buckets[b] = g_frameBuckets[b].exchange(0, std::memory_order_relaxed);
+        const double maxMs = g_frameMaxNs.exchange(0, std::memory_order_relaxed) / 1e6;
+        std::fprintf(stderr, "[m5f] t=%.0f game frames/s %.1f, %.1f ms avg, %.1f max; up to 33.4 ms %llu, 50 %llu, 100 %llu, more %llu\n", seconds, marks * 1000.0 / span, marks ? span / marks : 0.0, maxMs,
+                     (unsigned long long)buckets[0], (unsigned long long)buckets[1], (unsigned long long)buckets[2], (unsigned long long)buckets[3]);
+        std::fprintf(stderr, "[m5m] t=%.0f tick/s %.1f drawn/s %.1f; palettes %.0f, targets %.1f MB, depth %.0f (%.1f MB), textures %.0f (%.1f MB)\n", seconds, (tick - tickBefore) * 1000.0 / span, frames * 1000.0 / span,
+                     gpu[12], gpu[13] / 1048576.0, gpu[14], gpu[15] / 1048576.0, gpu[16], gpu[17] / 1048576.0);
+        tickBefore = tick;
+        std::fprintf(stderr, "[m5w] t=%.0f per s: VU0 %.0f gave up %.0f other %.0f; VU1 %.0f other %.0f; runs %.0f vertices %.0f passes %.0f rt switches %.0f tex uploads %.1f (%.2f MB) rt uploads %.1f feedback %.1f cluts %.1f; execute %.1f ms; %.0f targets, %.0f programs\n", seconds,
+                     (counts[0] - before[0]) * 1000.0 / span, (counts[1] - before[1]) * 1000.0 / span, (counts[2] - before[2]) * 1000.0 / span, (counts[3] - before[3]) * 1000.0 / span, (counts[4] - before[4]) * 1000.0 / span,
+                     (gpu[0] - gpuBefore[0]) * 1000.0 / span, (gpu[1] - gpuBefore[1]) * 1000.0 / span, (gpu[2] - gpuBefore[2]) * 1000.0 / span, (gpu[3] - gpuBefore[3]) * 1000.0 / span, (gpu[4] - gpuBefore[4]) * 1000.0 / span,
+                     (gpu[5] - gpuBefore[5]) * 1000.0 / span / 1048576.0, (gpu[6] - gpuBefore[6]) * 1000.0 / span, (gpu[7] - gpuBefore[7]) * 1000.0 / span, (gpu[8] - gpuBefore[8]) * 1000.0 / span, (gpu[11] - gpuBefore[11]) * 1000.0 / span, gpu[9], gpu[10]);
+        std::memcpy(before, counts, sizeof(before));
+        std::memcpy(gpuBefore, gpu, sizeof(gpuBefore));
+    }
     std::fprintf(stderr, "[m5] t=%.0f vsyncs/s %.1f; game frames/s %.1f, %.1f ms avg, %.0f max, needing %u vsyncs, lasting 1:%llu 2:%llu 3:%llu 4:%llu 5+:%llu; latch avg %.1f max %.1f, swap avg %.1f max %.1f; cpu%s; %.1f C\n",
                  seconds, ticks * 1000.0 / span, flips * 1000.0 / span, flips ? span / flips : 0.0, frameMax, needed, (unsigned long long)hist[1], (unsigned long long)hist[2], (unsigned long long)hist[3], (unsigned long long)hist[4], (unsigned long long)hist[5],
                  latchSum / std::max<uint64_t>(frames, 1u), latchMax, swapSum / std::max<uint64_t>(frames, 1u), swapMax, cpu, temperature());

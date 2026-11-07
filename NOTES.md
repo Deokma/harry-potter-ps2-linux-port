@@ -3,7 +3,7 @@
 Running log: decisions, open questions, commands that worked.
 Phase reports live in `docs/PHASE_N.md`.
 
-## Current state and handoff (2026-11-06)
+## Current state and handoff (2026-11-07)
 
 **A fresh session needs only this section and `docs/PHASE_4.md`.** Older state is under
 "History" below; read it only when a pointer here sends you there.
@@ -109,7 +109,14 @@ More commands at the end of this file ("Commands that worked").
   upload from the VIF1 interrupt handler (`0x2D3398`), which the runtime never ran. It now
   runs in place when a flagged VIFcode completes. Details in `docs/PHASE_4.md`.
 
-**Phase 4's goal is met: the title menu on the device, natively, through the Mali-G31** (`docs/PHASE_4.md`, "M5 result"). On the menu: 60 vsyncs/s, game thread 28 % of a core, about 12 ms per game frame, peak 69.9 C. **Next is the user's call.** Open: real pad and audio, New Game stops at the loading bar's halfway point, heavy frames have not run on this path, the game's clock isn't locked to real time while its thread is busy, float groups are off in the runner, VU1 and VIF on their own thread. M1 to M5 results: "M1 result", "M3 result", "M4 result", "M2 result", "M5 result".
+**Phase 4's goal is met: the title menu on the device, natively, through the Mali-G31** (`docs/PHASE_4.md`, "M5 result"). On the menu: 60 vsyncs/s, game thread 28 % of a core, about 12 ms per game frame, peak 69.9 C. M1 to M5 results: "M1 result", "M3 result", "M4 result", "M2 result", "M5 result".
+
+**Past New Game (2026-11-07, user: "Get past New Game"): done, and stopped by rule (a).** On the device the cutscenes play and at 250 s Harry stands in a Diagon Alley shop under player control; 260 s with no stall or crash (`panel-122931`). **A gameplay frame takes 107 ms (9.3 per second) against 33.3 ms**, cutscene frames 67-117 ms, game thread at 100 %. Details, profile and what it would take: `docs/PHASE_4.md`, "Past New Game". **Next is the user's call.**
+- Game frames are now counted exactly (`[m5f]` lines): a failed PollSema returning to `0x2cd6c8` is one entry into the vsync wait. The old `[m5]` "game frames" from the vblank count's resets undercounts about tenfold in 3D scenes (right on the menu); don't use it there.
+- `[m5m]` lines: palettes, targets, depth buffers, textures held. Render targets and depth buffers are still never evicted (34.8 + 29.8 MB at 260 s, growing slowly).
+- Profiling on the device: add `PS2PORT_SAMPLE=samples.bin PS2PORT_SAMPLE_FROM=A PS2PORT_SAMPLE_TO=B` to `device_panel.sh`; files land in `panel-*/`; then in WSL `python3 -I scripts/sample_threads.py $X/samples.bin private/third_party/build-m2/aarch64/runner --nm aarch64-linux-gnu-nm --lib private/gsprof/lib --top 20 --thread GameThread | c++filt` (`private/gsprof/lib` holds the device's libc and libmali).
+- The private runtime and IOP changes are saved in `trial/ps2recomp-m1-runtime.patch` and `trial/ps2recomp-iop.patch` (`git diff --ignore-cr-at-eol` in the checkout, from WSL).
+Open: real pad and audio, movies, the game's clock isn't locked to real time while its thread is busy (17-27 vsyncs/s in the cutscenes), float groups off in the runner, VU1/VIF/GS recording and the IOP all on the game thread.
 **The GS path's CPU cost is over budget and is the main risk for gameplay:** 35-100 ms per 3D frame on one A53, against a 33 ms frame. GL now runs on the main thread, which takes off the driver's share. Direct vertex handoff costs about 1 ms and can save at most
 14-17 ms of it, so it won't close the gap alone: parsing is a quarter to a third, the rest is VRAM and textures, libc and the driver ("M4 result"). A thread split is the other half. Keep calls down: read a file once in a larger piece, apply several edits from one script.
 

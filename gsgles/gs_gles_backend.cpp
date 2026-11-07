@@ -561,7 +561,7 @@ void GSGlesBackend::destroyGlObjects()
     for (auto &t : m_samplers)
         glDeleteSamplers(1, &t.second);
     for (auto &c : m_cluts)
-        glDeleteTextures(1, &c.second);
+        glDeleteTextures(1, &c.second.tex);
     if (m_captureFbo)
     {
         glDeleteFramebuffers(1, &m_captureFbo);
@@ -1040,9 +1040,12 @@ unsigned GSGlesBackend::resolveClut(const GSTex0Reg &tex0, const GSTexaReg &texa
                                     0x9E3779B97F4A7C15ull);
     if (tex0.cpsm != GS_PSM_CT32)
         key ^= (static_cast<uint64_t>(texa.ta0) << 40) ^ (static_cast<uint64_t>(texa.ta1) << 48) ^ (static_cast<uint64_t>(texa.aem) << 56);
-    auto it = m_cluts.find(key);
-    if (it != m_cluts.end())
-        return it->second;
+    auto it = m_clutKeys.find(key);
+    if (it != m_clutKeys.end())
+    {
+        it->second->lastUsed = m_frameIndex;
+        return it->second->tex;
+    }
 
     std::vector<uint32_t> palette(256u, 0u);
     const uint32_t entries = fourBit ? 16u : 256u;
@@ -1058,7 +1061,16 @@ unsigned GSGlesBackend::resolveClut(const GSTex0Reg &tex0, const GSTexaReg &texa
             raw = static_cast<uint32_t>(m_clutRam[index]) | (static_cast<uint32_t>(m_clutRam[index + 256u]) << 16);
         palette[i] = texelToRgba(tex0.cpsm, raw, texa);
     }
+    const uint64_t content = hashBytes(reinterpret_cast<const uint8_t *>(palette.data()), entries * 4u) ^ (static_cast<uint64_t>(entries) * 0x9E3779B97F4A7C15ull);
+    const auto placed = m_cluts.try_emplace(content);
+    ClutEntry &entry = placed.first->second;
+    entry.lastUsed = m_frameIndex;
+    m_clutKeys[key] = &entry;
+    if (!placed.second)
+        return entry.tex;
+
     const unsigned tex = takeName(m_texNames, "texture");
+    entry.tex = tex;
     pushOp([tex, palette = std::move(palette)]()
            {
                glActiveTexture(GL_TEXTURE1);
@@ -1068,9 +1080,29 @@ unsigned GSGlesBackend::resolveClut(const GSTex0Reg &tex0, const GSTexaReg &texa
                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
                glActiveTexture(GL_TEXTURE0);
            });
-    m_cluts[key] = tex;
     ++m_stats.clutUploads;
     return tex;
+}
+
+void GSGlesBackend::evictCluts()
+{
+    constexpr size_t kKeys = 8192u, kPalettes = 1024u;
+    if (m_cluts.size() > kPalettes)
+    {
+        for (auto it = m_cluts.begin(); it != m_cluts.end();)
+        {
+            if (m_frameIndex - it->second.lastUsed > 120u)
+            {
+                pushOp([tex = it->second.tex]() { glDeleteTextures(1, &tex); });
+                it = m_cluts.erase(it);
+            }
+            else
+                ++it;
+        }
+        m_clutKeys.clear();
+    }
+    else if (m_clutKeys.size() > kKeys)
+        m_clutKeys.clear();
 }
 
 bool GSGlesBackend::sameState(const GSDrawState &a, const GSDrawState &b) const
@@ -2134,6 +2166,7 @@ void GSGlesBackend::LatchFrame(const GSPresentationRequest &request)
     refillNames();
     planPresent(request);
     evictTextures();
+    evictCluts();
     m_execVertices.swap(m_vertices);
     m_execCommands.swap(m_commands);
     m_execUploads.swap(m_uploadPixels);
@@ -2342,6 +2375,33 @@ void GSGlesBackend::SnapshotVram(std::vector<uint8_t> &out) const
 GSTransferSnapshot GSGlesBackend::GetTransferSnapshot() const
 {
     return m_mem.GetTransferSnapshot();
+}
+
+void GSGlesBackend::countStats(double out[18]) const
+{
+    double targetBytes = 0.0, depthBytes = 0.0;
+    for (const auto &rt : m_rts)
+        targetBytes += static_cast<double>(rt->width) * rt->height * 4.0;
+    for (const auto &d : m_depths)
+        depthBytes += static_cast<double>(d.second->width) * d.second->height * 4.0;
+    out[12] = static_cast<double>(m_cluts.size());
+    out[13] = targetBytes;
+    out[14] = static_cast<double>(m_depths.size());
+    out[15] = depthBytes;
+    out[16] = static_cast<double>(m_contentTextures.size());
+    out[17] = static_cast<double>(m_textureBytes);
+    out[0] = static_cast<double>(m_stats.runs);
+    out[1] = static_cast<double>(m_stats.vertices);
+    out[2] = static_cast<double>(m_stats.passes);
+    out[3] = static_cast<double>(m_stats.rtSwitches);
+    out[4] = static_cast<double>(m_stats.texUploads);
+    out[5] = static_cast<double>(m_stats.texBytes);
+    out[6] = static_cast<double>(m_stats.rtUploads);
+    out[7] = static_cast<double>(m_stats.rtFeedback);
+    out[8] = static_cast<double>(m_stats.clutUploads);
+    out[9] = static_cast<double>(m_rts.size());
+    out[10] = static_cast<double>(m_programs.size());
+    out[11] = m_stats.executeMs;
 }
 
 void GSGlesBackend::printStats() const

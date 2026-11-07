@@ -36,6 +36,9 @@ public:
     // The next Present reads its picture back, for comparison with a reference.
     void setCaptureNextPresent(bool capture) { m_capture = capture; }
     void printStats() const;
+    // Runs, vertices, draw passes, target switches, texture uploads, texture bytes, target uploads, target feedback copies, CLUT uploads, render targets, GL programs, ms executing,
+    // then what is held now: palettes, target bytes, depth buffers, depth bytes, content textures, content bytes
+    void countStats(double out[18]) const;
 
     void Initialize(uint8_t *vram, uint32_t vramSize) override;
     void Reset() override;
@@ -202,7 +205,16 @@ private:
     std::unordered_map<uint64_t, TextureEntry> m_contentTextures;
     std::unordered_map<uint64_t, unsigned> m_samplers;
     size_t m_textureBytes = 0;
-    std::unordered_map<uint64_t, unsigned> m_cluts;
+    // Palettes by content. CLUT memory's hash changes with every load, including parts a draw doesn't read, so m_clutKeys only remembers which
+    // palette a hash and a way of reading it came to; left alone, one texture per hash ran the device out of memory in three minutes.
+    struct ClutEntry
+    {
+        unsigned tex = 0;
+        uint32_t lastUsed = 0;
+    };
+    std::unordered_map<uint64_t, ClutEntry> m_cluts;
+    std::unordered_map<uint64_t, ClutEntry *> m_clutKeys;
+    void evictCluts();
 
     std::vector<HostVertex> m_vertices;
     std::vector<Command> m_commands;

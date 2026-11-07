@@ -646,3 +646,66 @@ Git Bash, to see it on the panel:
 ```
 DEVICE_TIMEOUT=150 sh scripts/device_detach.sh -g private/third_party/build-m2/aarch64/runner-aarch64 runner/device_panel.sh -- sh device_panel.sh 110 '"CROSS@5+0.3,START@40+3"' '"70"'
 ```
+
+# Past New Game (2026-11-07)
+
+The user's request after M5: "Get past New Game". **Done on the device:** the cutscenes play (Quirrell with a subtitle, Hagrid and young Harry in Diagon Alley, Ollivanders), and at 250 s Harry stands in a shop under player control, the pad script having ended at 58 s. 260 s with no stall and no crash, peak 67.6 C (`panel-122931`; `/dev/fb0` at 150, 200 and 250 s). **Then stop rule (a): a gameplay frame takes 107 ms against 33.3 ms.**
+
+## What stopped it
+
+1. **The IOP** (commit `3cc1080`): `sceSifFreeIopHeap` ran as the game's RPC while its partner alloc was native, so every sample's temporary block leaked (2,169 KB asked of a 2 MB IOP); the heap started 700 KB too high; and the SPU2 wasn't modelled, so the stream library, which watches voice positions, never started a cutscene. Now: the free is native, the heap starts at 0x90000 (peak use 941 KB), and a silent SPU2 model moves voices through their ADPCM blocks in real time.
+2. **GPU memory.** From about 142 s the driver stalled (latch 116-303 ms, `mali-mem-purge` busy), and at 190 s the kernel's OOM killer ended the runner: 569 MB GPU-mapped plus 325 MB of heap, of 996 MB (`panel-115539`, `dmesg`). The cause was one CLUT texture per hash of the whole CLUT memory and the way a draw reads it. That hash changes with every load, partial ones into entries no draw reads included, so the cutscenes made about 415 new 256x1 textures a second and freed none. Palettes are now keyed by their content, with the old key kept only as a lookup, and evicted after 120 unused frames above 1,024: **427 palettes in all by 260 s.**
+
+Held at 260 s: render targets 34.8 MB, 58 depth buffers 29.8 MB, 2,474 textures 47.8 MB. Targets and depth buffers are still never evicted and grew slowly over the run (2 depth buffers at 20 s, 58 at 260 s). Watch it in longer runs.
+
+## Game frames, measured exactly
+
+The game's vsync wait (`0x2cd6a0`) first drains its semaphore with PollSema until it fails, then waits until the vblank count reaches the needed number. So **a failed PollSema returning to `0x2cd6c8` is one game frame.** A weak hook in the runtime's PollSema (`ps2portPollFailed`) feeds `[m5f]` lines: frames per second, average, maximum, and how many took up to 33.4, 50, 100 ms or more.
+
+**The M5 measure, from resets of the vblank count, undercounts about tenfold in 3D scenes.** It reported 0.6-1.2 frames a second in the cutscenes (1,250 ms a frame, as first reported), against 9-15 counted exactly. On the menu the two agree (23.8 and 24.0 a second). Why it misses resets in 3D scenes wasn't established. M5's menu figures stand.
+
+| Stretch (`panel-122931`) | Game frames | Average | Budget | Vsyncs | Game thread |
+|---|---|---|---|---|---|
+| Menu, t = 50-60 s | 24.0 per second | 41.7 ms (2-3 vsyncs each) | 33.3 ms | 60 per second | 26 % |
+| Cutscenes, t = 80-190 s | 8.8-14.9 per second | **67-114 ms** | 33.3 ms | 18-28 per second | 100 % |
+| **In play, in the shop, t = 200-260 s** | **8.6-9.3 per second** | **107-117 ms**, every frame over 100 ms | 33.3 ms | 17-19 per second | 100 % |
+
+The main thread (GL) is at 9-10 % and Mali's worker at 3 %, so the GPU side has room. The game thread is the limit, and the other three cores are nearly idle.
+
+## Where the game thread's time goes
+
+Sampling profiler in `runner/display.cpp` (`PS2PORT_SAMPLE`, 1 ms of CPU time per sample), read with `scripts/sample_threads.py`.
+
+| Group | Cutscene before (`panel-115017`) | Cutscene after (`panel-122931`) |
+|---|---|---|
+| eegen guest code | 14.4 % | 20.4 % |
+| PS2Recomp guest code | 5.7 % | 7.6 % |
+| GS (parsing, recording) | 11.1 % | 15.4 % |
+| PS2Memory (VIF, DMA, memory) | 8.3 % | 13.1 % |
+| libc (copies, allocation) | 7.7 % | 9.6 % |
+| Translated VU0, VU1 | 6.9 % | 8.8 % |
+| EE scheduler and runtime | 5.9 % | 7.6 % |
+| IOP emulator | 12.8 % | 7.3 % |
+| `std::map` walks | 16.2 % | 0.2 % |
+| VU interpreter | 1.2 % | 2.1 % |
+| Other | 9.7 % | 7.9 % |
+
+Two fixes made the difference:
+
+- **The IOP ran a scheduler pass every few EE instructions**, walking its `std::map` of threads two or three times to find them asleep. It now runs in batches of 4,096 IOP cycles (111 us of its clock); inside a batch it still runs every cycle. The map walks went from 16.2 % to 0.2 %.
+- **DMA chains were gathered into a buffer grown from nothing every time**, and every GIF packet was copied into the arbiter's queue even when it went straight out. Chain buffers are now reused, and a packet passes through uncopied when nothing is queued. `vector::_M_range_insert` went from 5.6 % to out of the list.
+
+There is no exact before-and-after frame time for these two, since the exact counter came after them.
+
+**In play** (`panel-123527`, t = 215-260 s, Harry standing in the shop, 4,018 samples): 113 ms a frame, 8.8 a second, every one over 100 ms. Per frame about 75,000 vertices, 1,600 VU1 runs and 7,900 VU0 calls. Game thread: **translated VU 17.1 %** (`egVu1Run` alone 15.5 %), GS 16.4 %, eegen guest code 16.4 %, PS2Memory 11.2 % (`processVIF1Data` 4.9 %), other 9.0 %, PS2Recomp guest code 8.9 %, libc 7.8 %, EE scheduler and runtime 6.9 %, IOP 5.7 %. VU1, VIF and GS are a bigger share here than in the cutscenes. The main thread spends its 8 % mostly in libmali and libc.
+
+## What it would take
+
+Estimates from the profile, not measurements. VU1, VIF and GS recording (about 37 % of the game thread in the cutscenes, about 45 % in play) could move to a second core, as M4 already suggested, and the IOP (7 %) to a third. If that overlapped perfectly, the game thread would keep about 55-60 % of today's work: **roughly 60-65 ms a gameplay frame, still about twice the budget.** The rest is EE guest code plus the runtime around it (scheduler, memory, libc). It would have to get about twice as fast as well, for example with float groups (off in the runner) and less runtime overhead per call. So **the full game at full speed on this device is not shown to be reachable**, and the gap is large: about 3.2 times over in gameplay today, and an estimated 2 times after a thread split.
+
+## Commands
+
+Git Bash, the run above (results in `panel-*/` on the device, then copied to `trial/device/`):
+```
+DEVICE_TIMEOUT=300 sh scripts/device_detach.sh -g private/third_party/build-m2/aarch64/runner-aarch64 runner/device_panel.sh -- sh device_panel.sh 260 '"CROSS@5+0.3,START@40+3,CROSS@58+1"' '"150 200 250"' PS2PORT_FRAME_EVERY=1200 PS2PORT_SAMPLE=samples.bin PS2PORT_SAMPLE_FROM=100 PS2PORT_SAMPLE_TO=135
+```

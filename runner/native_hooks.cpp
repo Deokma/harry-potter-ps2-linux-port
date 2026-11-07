@@ -95,6 +95,15 @@ namespace
     }
 }
 
+void ps2portNativeCounts(uint64_t out[5])
+{
+    out[0] = g_stats.vu0Native;
+    out[1] = g_stats.vu0GaveUp;
+    out[2] = g_stats.vu0Other;
+    out[3] = g_stats.vu1Native;
+    out[4] = g_stats.vu1Other;
+}
+
 void ps2portInstallNative()
 {
     if (std::getenv("PS2PORT_NO_EG"))
