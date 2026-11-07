@@ -172,18 +172,23 @@ def load_borrow(directory):
         cur = None
         addr = 0
         for line in path.read_text(errors="replace").splitlines():
-            m = _BORROW_LINE.match(line)
+            m = _BORROW_LINE.match(line.replace("        //", "    //", 1) if "(Delay Slot)" in line else line)
             if m:
                 cur = None
                 addr = int(m.group(1), 16)
-                if "Delay Slot" in line or addr in BORROW:
+                slot = "(Delay Slot)" in line
+                # a delay-slot copy only when there is no ordinary one: it ends at ctx->in_delay_slot = false
+                if addr in BORROW and (slot or not BORROW[addr][3]):
                     continue
-                cur = [int(m.group(2), 16), m.group(3), []]
+                cur = [int(m.group(2), 16), m.group(3), [], slot]
                 BORROW[addr] = cur
                 continue
             if cur is None:
                 continue
             s = line.strip()
+            if cur[3] and (s.startswith("ctx->in_delay_slot") or s.startswith("if (") or s.startswith("}")):
+                cur = None
+                continue
             if s.startswith("label_") or s == "}":
                 cur = None  # what follows belongs to the next instruction or ends the function
                 continue
@@ -607,6 +612,7 @@ class Program:
                     self.ps2recomp[int(m.group(3), 16)] = m.group(1)
         self.checkpoints = args.checkpoints
         self.no_entry = set()  # loop heads with nowhere to resume: no checkpoint there
+        self.resumes = {}  # function start: loop heads it checkpoints at, which get an eegen entry of their own (EG_xxx_r)
         self.skip = {int(x, 16) for x in args.skip.split(",")} if args.skip else set()
         self.native = set()
         if args.native:
@@ -995,6 +1001,7 @@ def emit_function(prog, start, end):
         if "temp" in n.extra:
             temps.append(n.extra["temp"])
     body = []
+    checks = set()
     skip_to = 0
     for k, n in enumerate(nodes):
         if k < skip_to:
@@ -1039,6 +1046,7 @@ def emit_function(prog, start, end):
                 line.append(f"ctx->pc = 0x{e['addr']:x}u; runtime->handleBreak(rdram, ctx);")
             line.append(reload(lout[k]))
         elif n.kind == "check":
+            checks.add(n.extra['target'])
             line.append(f"if (EG_LOOP_DUE(runtime)) {{ {spill(din[k])} ctx->pc = 0x{n.extra['target']:x}u; return; }}")
         elif n.kind == "exit":
             line.append(spill(din[k]))
@@ -1074,11 +1082,25 @@ def emit_function(prog, start, end):
         out.append("    float " + ", ".join(fp) + ";")
     for t in temps:
         out.append(f"    {t};")
+    if checks:
+        # A thread resumed at one of this function's loop heads (after a checkpoint) comes back here through EG_xxx_r, not into
+        # PS2Recomp's code: every cached register from the context (the checkpoint spilled the live ones), then to the loop head.
+        cases = " ".join(f"case 0x{t:x}u: goto L_{t:x};" for t in sorted(checks))
+        out.append(f"    if (__builtin_expect(eg_resume_pc != 0u, 0)) {{ const uint32_t r_ = eg_resume_pc; eg_resume_pc = 0u; "
+                   f"{reload(regs)} switch (r_) {{ {cases} default: break; }} }}")
+        prog.resumes[start] = sorted(checks)
     entry = reload(lin[0])
     if entry:
         out.append("    " + entry)
     out.extend(body)
     out.append("}")
+    if checks:
+        out.append("")
+        out.append(f"void EG_{start:08x}_r(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)")
+        out.append("{")
+        out.append("    eg_resume_pc = ctx->pc;")
+        out.append(f"    EG_{start:08x}(rdram, ctx, runtime);")
+        out.append("}")
     stats = {"nodes": len(nodes), "entry_loads": len(lin[0]),
              "syncs": sum(1 for n in nodes if n.kind == "sync")}
     return "\n".join(out) + "\n", stats
@@ -1145,6 +1167,14 @@ def main():
             f.write(f"    {{0x{a:x}u, EG_{a:08x}}},\n")
         f.write("    {0u, nullptr},\n};\n")
         f.write(f"const unsigned eg_function_count = {len(prog.ours)}u;\n")
+        # resume entries at loop heads (eegen_rt.h, eg_resume_pc)
+        for a in sorted(prog.resumes):
+            f.write(f"void EG_{a:08x}_r(uint8_t *, R5900Context *, PS2Runtime *);\n")
+        f.write("\nconst EgFunction eg_resumes[] = {\n")
+        for a in sorted(prog.resumes):
+            for t in prog.resumes[a]:
+                f.write(f"    {{0x{t:x}u, EG_{a:08x}_r}},\n")
+        f.write("    {0u, nullptr},\n};\n")
         # the FPU mode the functions expect (eegen_fp.h)
         f.write(f"extern const bool eg_float_groups = {'true' if prog.fp_groups else 'false'};\n")
     reasons = collections.Counter(re.sub(r" at 0x[0-9a-f]+", "", r) for r in refused.values())

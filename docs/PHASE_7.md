@@ -45,3 +45,33 @@ From the last profiles of the game thread (`docs/PHASE_4.md`, "Speeding up the g
 - **Re-entries in PS2Recomp's code, part of its 12.8 %:** eegen entry points at its loop heads, so a function resumed after a checkpoint stays in eegen's code. The checkpoint exits come mostly from the 40 hand-off wakes a frame.
 - **Scheduler and runtime, about 10 %:** `checkpointDue`, `lookupFunction`, `dispatchGuestBranch`, `writeIORegister`.
 - **The remaining 15 refused functions,** and the hottest eegen functions (`EG_002d7878`, matrix work, 5-6 %) with float groups (off in the runner; Phase 3 measured 2 %).
+
+## Step 3: cutting the game thread's work
+
+The user's request: "Cut EE-thread work". **In the shop: 48.2-48.9 -> 45.1-45.5 ms a frame (22 a second), measured. The game thread is no longer the limit; stage A is.** The table says continue (<=50 ms).
+
+### What changed
+
+1. **VIF1 chains are copied by stage A, not the EE.** At the kick the EE only notes the chain's pieces; stage A copies them before running VIF1. Until it has, a read of D1_CHCR reports the channel busy and the completion (D_STAT, the DMAC handler cause) is not booked, as with the hardware's own DMA. The EE books it when it reads D1_CHCR or D_STAT, or at its next checkpoint after stage A's wake, and drains the DMAC handlers there. The EE never found the channel busy in play (`D1_CHCR reads busy` 0). Measured on its own: 48.2-48.9 -> 46.1-47.7 ms; libc went from 22 % to 8.7 % of the game thread (`panel-000951`).
+2. **eegen resume entries.** A function with loop checkpoints gets `EG_xxx_r`; resumed at a loop head, it reloads its cached registers from the context and jumps there, instead of falling into PS2Recomp's re-entry code. 3,206 loop heads (`PS2PORT_NO_EG_RESUME=1` turns them off).
+3. **eegen borrows delay-slot instructions too** (PS2Recomp's copy between `ctx->in_delay_slot = true` and `false`): 5,574 of 5,708 functions translate, among them `2cfa30` (7.2 % of the game thread before) and `2df7f0`. Harness, whole program on x86: **0 RDRAM bytes differ, exactly 2,861,449 guest instructions**, v0 as without borrowing. The harness runs without checkpoints, so it does not exercise the resume entries; the PC boot and the device runs do.
+
+### Numbers (`panel-004329`, the shop, 227-258 s, 1.416 GHz, cooling state 0, CPU zone 72-73 C; peak 74.7 C)
+
+| Thread | CPU, measured | Per frame (45.3 ms) |
+|---|---|---|
+| Game thread (EE) | 92 % | about 41.7 ms (was 47.5) |
+| Stage A (VIF1, VU1, arbiter, now the chain copies) | 85 % | 43.2 ms in jobs (95 % of the time), 4.7 ms of it waiting for the EE |
+| Stage B (GS parsing, recording) | 37 % | 17.8 ms in its batch loop |
+| Main thread (GL) | 24 % | about 11 ms |
+| IOP thread (with the silent SPU2) | 15 % | about 7 ms |
+
+Per core: 66, 70, 70, 73 % busy.
+
+- **The limit is now stage A** (95 % of its time in jobs). Its time: translated VU1 59 %, `processVIF1Data` 18 %, the chain copies 14.5 %, unpacking 4.5 %. **Expected floor with today's stage A: about 43 ms (estimate).**
+- The game thread now: eegen guest code 46 %, libc 12.6 %, scheduler and runtime 12.1 %, PS2Memory 9.8 %, PS2Recomp guest code 8.1 % (was 18 %; most of what is left is `FUN_002c4fe0` resumed at a call's return address, which the loop-head entries don't cover).
+
+### What would go further (estimates)
+
+- **Stage A:** the chain copies to a stage of their own before it (about 5.5 ms a frame; the cores are 66-73 % busy); then VU1's translated code, the largest single item (about 22 ms).
+- **Game thread:** resume entries at call return addresses too (`FUN_002c4fe0`, 5 %), the tag walk (`writeIORegister` 4 %), scheduler and runtime (12 %). These shorten the frame only once stage A does.

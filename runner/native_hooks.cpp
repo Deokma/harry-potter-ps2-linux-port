@@ -19,6 +19,7 @@
 #include <cstring>
 
 extern const EgFunction eg_functions[];
+uint32_t eg_resume_pc = 0; // eegen_rt.h: set by an EG_xxx_r entry for the function it calls (EE thread only)
 
 #include "eegen_vu0.h"
 #include "vu0_programs.inc"
@@ -123,6 +124,18 @@ void ps2portInstallNative()
         ++count;
     }
     std::fprintf(stderr, "[native] %u eegen functions in the table\n", count);
+    // Resumes at loop heads go to eegen's own entries, not PS2Recomp's re-entry code (PS2PORT_NO_EG_RESUME=1 keeps PS2Recomp's)
+    if (std::getenv("PS2PORT_NO_EG_RESUME"))
+        return;
+    unsigned resumes = 0;
+    for (const EgFunction *f = eg_resumes; f->function; ++f)
+    {
+        if (f->address < lowest || f->address > highest)
+            continue;
+        g_ps2RecompiledFunctionTable[(f->address - g_ps2RecompiledFunctionTableBase) >> 2] = f->function;
+        ++resumes;
+    }
+    std::fprintf(stderr, "[native] %u loop heads resume in eegen's code\n", resumes);
 }
 
 bool ps2portVu0Native(PS2Memory &memory, R5900Context *ctx, uint32_t startPC)

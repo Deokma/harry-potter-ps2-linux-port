@@ -343,6 +343,9 @@ struct EgFunction
 };
 extern const EgFunction eg_functions[];
 extern const unsigned eg_function_count;
+// Loop heads a function checkpoints at, each with that function's resume entry (EG_xxx_r), which sets eg_resume_pc and calls it
+extern const EgFunction eg_resumes[];
+extern uint32_t eg_resume_pc;
 
 #define EG_LD(T, a) eg_ld<T>(rdram, ctx, runtime, (a))
 #define EG_ST(T, a, v) eg_st<T>(rdram, ctx, runtime, (a), static_cast<T>(v))

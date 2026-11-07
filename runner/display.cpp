@@ -430,14 +430,14 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
             for (int k = 0; k < 11; ++k)
                 per[k] = (touch[k] - touchBefore[k]) * 1000.0 / span;
             std::memcpy(touchBefore, touch, sizeof(touch));
-            static uint64_t gsBefore[7] = {};
-            uint64_t gs[7];
-            for (int k = 0; k < 7; ++k)
+            static uint64_t gsBefore[8] = {};
+            uint64_t gs[8];
+            for (int k = 0; k < 8; ++k)
                 gs[k] = ps2portGsThreadCounts(k);
-            std::fprintf(stderr, "[m5t] t=%.0f per s: gs priv r %.0f w %.0f; vif1 r %.0f w %.0f; gif regs %.0f; channel reads %.0f; vu1 mem %.0f; fifo %.0f; kicks vif1 %.0f gif %.0f; vif1 irqs %.0f; gs thread jobs %.0f handed %.0f waits %.0f; in jobs %.0f ms of which waiting for the EE %.0f ms; stage B busy %.0f ms, queue full %.0f\n", seconds,
+            std::fprintf(stderr, "[m5t] t=%.0f per s: gs priv r %.0f w %.0f; vif1 r %.0f w %.0f; gif regs %.0f; channel reads %.0f; vu1 mem %.0f; fifo %.0f; kicks vif1 %.0f gif %.0f; vif1 irqs %.0f; gs thread jobs %.0f handed %.0f waits %.0f; in jobs %.0f ms of which waiting for the EE %.0f ms; stage B busy %.0f ms, queue full %.0f; D1_CHCR reads busy %.0f\n", seconds,
                          per[0], per[1], per[2], per[3], per[4], per[5], per[6], per[7], per[8], per[9], per[10], (gs[2] - gsBefore[2]) * 1000.0 / span,
                          (gs[0] - gsBefore[0]) * 1000.0 / span, (gs[1] - gsBefore[1]) * 1000.0 / span, (gs[4] - gsBefore[4]) / 1e6 * 1000.0 / span,
-                         (gs[3] - gsBefore[3]) / 1e6 * 1000.0 / span, (gs[5] - gsBefore[5]) / 1e6 * 1000.0 / span, (gs[6] - gsBefore[6]) * 1000.0 / span);
+                         (gs[3] - gsBefore[3]) / 1e6 * 1000.0 / span, (gs[5] - gsBefore[5]) / 1e6 * 1000.0 / span, (gs[6] - gsBefore[6]) * 1000.0 / span, (gs[7] - gsBefore[7]) * 1000.0 / span);
             std::memcpy(gsBefore, gs, sizeof(gs));
             static uint64_t gatherBefore[2] = {};
             std::fprintf(stderr, "[m5g] t=%.0f DMA chains gathered %.2f MB/s, of which already copied in the same chain %.2f MB/s\n", seconds,
