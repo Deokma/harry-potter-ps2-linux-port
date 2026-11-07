@@ -61,7 +61,15 @@ job "-O2" "$rt/src/main.cpp" "$out/own/main.o"
 job "-O1" "$rt/src/runner/register_functions.cpp" "$out/own/register_functions.o"
 job "-O3" "$src/native_hooks.cpp" "$out/own/native_hooks.o" "$(find "$src" "$src/../vu1" "$src/../eegen" "$gen" -maxdepth 1 \( -name '*.h' -o -name '*.inc' -o -name 'vu1_native.cpp' \) -newer "$out/own/native_hooks.o" 2>/dev/null | head -1)"
 
-# PS2Recomp's generated code: it takes re-entries and whatever eegen refused, so -O1 is enough
+# PS2Recomp's generated code: it takes re-entries and whatever eegen refused. Its memory helpers stayed calls, a tenth of the game
+# thread in play, until they were made always_inline (private runtime patch). FUN_OPT (default -O2) sets the level; a change of it
+# or of fun_stamp (bump it when the runtime headers change what this code inlines) rebuilds it all, about 15 minutes for aarch64.
+fun_opt=${FUN_OPT:--O2}
+fun_stamp="$fun_opt always_inline-1"
+if [ "$(cat "$out/fun/opt.txt" 2>/dev/null)" != "$fun_stamp" ]; then
+    find "$out/fun" -name '*.o' -delete
+    echo "$fun_stamp" > "$out/fun/opt.txt"
+fi
 if ! ls "$out"/fun/list_*.cpp >/dev/null 2>&1; then
     ls "$rt"/src/runner/FUN_*.cpp | split -l 32 - "$out/fun/list_"
     for l in "$out"/fun/list_*; do
@@ -70,14 +78,19 @@ if ! ls "$out"/fun/list_*.cpp >/dev/null 2>&1; then
     done
 fi
 python3 -I "$src/stale.py" "$out/fun"
-for u in "$out"/fun/list_*.cpp; do job "-O1" "$u" "${u%.cpp}.o"; done
-# eegen's
-if ! ls "$out"/eg/list_*.cpp >/dev/null 2>&1; then
-    ls "$gen"/eg/EG_*.cpp | split -l 16 - "$out/eg/list_"
-    for l in "$out"/eg/list_*; do
+for u in "$out"/fun/list_*.cpp; do job "$fun_opt" "$u" "${u%.cpp}.o"; done
+# eegen's. Functions it newly translates go into batches of their own, so the batches already built stay as they are.
+ls "$gen"/eg/EG_*.cpp | sort > "$out/eg/all.txt"
+cat "$out"/eg/list_*.cpp 2>/dev/null | sed -n 's/^#include "\(.*\)"$/\1/p' | sort > "$out/eg/listed.txt"
+comm -23 "$out/eg/all.txt" "$out/eg/listed.txt" > "$out/eg/new.txt"
+if [ -s "$out/eg/new.txt" ]; then
+    batch=$out/eg/list_n$(date +%s)_
+    split -l 16 "$out/eg/new.txt" "$batch"
+    for l in "$batch"*; do
         while read -r f; do echo "#include \"$f\""; done < "$l" > "$l.cpp"
         rm "$l"
     done
+    echo "$(wc -l < "$out/eg/new.txt") new eegen functions"
 fi
 python3 -I "$src/stale.py" "$out/eg"
 for u in "$out"/eg/list_*.cpp; do job "-O2" "$u" "${u%.cpp}.o"; done

@@ -23,7 +23,8 @@ floats="--no-float-groups"
 [ "${1:-}" = groups ] && floats=""
 rm -rf "$out/eg.new"
 python3 -I eegen/eegen.py "$elf" "$t/function_map.csv" "$out/eg.new" --functions "$out/functions.txt" \
-    --ps2recomp-table "$t/out-b/register_functions.cpp" --native "$out/native.txt" --skip "$skip" $floats --runtime-count --checkpoints | tail -3 | cut -c1-240
+    --ps2recomp-table "$t/out-b/register_functions.cpp" --native "$out/native.txt" --skip "$skip" $floats --runtime-count --checkpoints \
+    --borrow "$t/out-b" | tail -4 | cut -c1-240
 # keeps unchanged files' times, so that the build recompiles only the batches that changed
 rsync -rc --delete "$out/eg.new/" "$out/eg/"
 rm -rf "$out/eg.new"

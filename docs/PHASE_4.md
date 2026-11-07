@@ -800,3 +800,42 @@ Temperature is the other thing to watch: three busy cores reached 77.9 C in 260 
 
 - **The game thread (64 ms).** Making it faster means the code itself: float groups in eegen (off in the runner), memory access for special addresses without the slow check, fewer scheduler checks and timer updates per checkpoint, and the copies of DMA chains (part of libc's 15 %). None of these is measured yet. The Phase 3 replays (main frames of 24-40 ms with float groups, outside this runtime) suggest that much of today's game-thread time is the runtime around the guest code, but that is an inference: those were different frames.
 - The GS thread is at 72 %, about 46 ms a frame, with VU1 20 ms of it. It isn't the limit yet, and won't be for long if the game thread gets faster.
+
+# Speeding up the game thread (2026-11-07)
+
+The user's request after the IOP thread: "Speed up game thread". **Gameplay frames went from 64 ms to 61.1-61.4 ms (16.4 a second); the two busy threads are now nearly balanced, so further gains need work cut on both.** Stop rule (a): still about twice the 33.3 ms budget.
+
+## What changed
+
+- **eegen borrows PS2Recomp's code for instructions it has none of its own for** (`--borrow DIR`): VU0 macro instructions (COP2), most MMI, ADDI, the rest of COP0, MTSAB/MTSAH. For each such instruction it takes the C++ PS2Recomp generated (the lines after the instruction's comment in out-b's `FUN_` files). It spills the GPRs the instruction reads to the context first and reloads those it writes after. Blocks with control flow (`goto`, `return`, labels, dispatch) and COP2 branches and ERET are still refused. **5,560 of 5,708 functions translate, up from 5,495**, among them six of the eight PS2Recomp functions that were hot in play. Harness check, whole program on x86: **0 RDRAM bytes differ, exactly 2,861,449 guest instructions**. The register v0 at the end differs from the PC reference (0 against 0x330000), but the same whole-program run without `--borrow` gives the same v0, so that difference predates this and is not from it. In play, PS2Recomp's share of the game thread went from 26 % to 13 %.
+- **Accounting at checkpoints in batches of 2,048 cycles** (`EeScheduler::checkpointDue`): PS2Recomp's code asks at every loop iteration with 32 cycles, and each ask ran the EE timers, the IOP hand-off and the deadline checks. `advanceEeTimers` also looked up GIF_STAT in the register map every time; now only after a transfer set its FIFO count. `advanceEeTimers` and the map lookups (about 7 % together) left the profile.
+- **DMA chains gathered by a direct appender** instead of `vector::insert` per piece (many are 8-byte VIF tags).
+- PS2Recomp's code built at -O2 instead of -O1 (`FUN_OPT`), with its memory helpers `always_inline`: they were 10 % of the game thread as calls. **This made no difference** to the frame: the time moved from the helpers into the `FUN_` functions. It stays (neutral), and costs a 15-minute rebuild when `fun_stamp` changes.
+
+## Numbers
+
+Device, the shop with Harry in play, 215-262 s. The clock stayed at 1,416 MHz with the CPU cooling state at 0 throughout (`freq.txt`, new in `device_panel.sh`), though the CPU zone has passive trips at 60 and 70 C and reached 76 C: the kernel did not throttle.
+
+| | IOP thread (`panel-161110`) | Now (`panel-181906`) |
+|---|---|---|
+| Game frame | 63.9-64.3 ms | **61.1-61.4 ms** |
+| Game thread | 99-100 % | **83 %** |
+| GS thread | 72 % | 82 % (89 % of the time in jobs, 7 % of it waiting for the EE to run VIF1 handlers) |
+| IOP thread | 10 % | 11 % |
+
+**Where the time goes now.** The game thread waits for the GS thread once a frame (the EE's per-frame sync on GS-side state), so the two work as a pipeline: each has about 50-54 ms of work a frame, plus about 5 ms of the GS thread waiting on the EE for VIF1 handlers.
+- Game thread: eegen guest code 37.5 %, libc 23.5 % (copies: **15 % of the thread is gathering DMA chains, about 3 MB a frame in small pieces across RDRAM**, 82 % of the copy samples from the DMA kick, 11 % from buffers growing), PS2Recomp guest code 12.8 % (mostly re-entries: a function resumed after a checkpoint runs the rest of itself in PS2Recomp's code), scheduler and runtime 9.7 %.
+- GS thread: translated VU1 33 %, GS parsing and recording 43 % (`fastUpload` 8 %, `writeRegisterPacked` 8 %, `vertexKick` 5 %), VIF1 12 %.
+
+## What it found that didn't help
+
+- The gain from the cheap runtime changes was small because the EE was not alone on the critical path: once its work shrank, the GS thread's became the limit.
+- Two wrong leads, recorded so they aren't followed again: idle guest threads polling (the profiler now records the EE guest thread of each sample, `--by-ee`: 98.5 % was the main thread, doing real work) and thermal throttling (`freq.txt`: none).
+
+## What's left
+
+Estimates. For the pipeline to reach 33 ms, both sides need roughly halving:
+- **EE:** not copying DMA chains (the GS thread would read them from RDRAM, with completion reported when it has), 15 %; eegen entry points for re-entries, so resumed functions stay in eegen's code; the remaining 15 refused functions.
+- **GS thread:** VU1's translated code (33 %) and the GS frontend's per-register parsing (`writeRegisterPacked`, `vertexKick`), which M4 already measured as a large share; fewer VIF1 hand-offs (40 a frame).
+
+Tools: `sample_threads.py --callers PATTERN` (from the link register, which the profiler now records) and `--by-ee`; `[m5t]` reports the GS thread's time in jobs and waiting; `[m5g]` the bytes of DMA chains gathered.

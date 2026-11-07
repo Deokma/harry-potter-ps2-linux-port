@@ -18,13 +18,19 @@ for t in $at; do
     (sleep "$t"; cat /dev/fb0 > "$d/panel-$t.raw"; cat /sys/class/graphics/fb0/pan >> "$d/fb.txt" 2>/dev/null) &
 done
 start=$(date +%s)
+# The CPU zone has passive trips at 60 and 70 C (power_allocator): above them the kernel lowers the clock whatever is pinned. Every 2 s:
+# seconds, CPU kHz, cooling state of the CPU (0 = none, 8 = most), CPU zone temperature.
+( while :; do echo "$(($(date +%s) - start)) $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq) $(cat /sys/class/thermal/cooling_device0/cur_state) $(cat /sys/class/thermal/thermal_zone0/temp)"; sleep 2; done ) > "$d/freq.txt" 2>/dev/null &
+fpid=$!
 env PS2PORT_DISPLAY=1 PS2PORT_M5_STATS=1 PS2PORT_NATIVE_STATS=1 PS2PORT_HEADLESS=1 PS2PORT_RUN_SECONDS="$secs" PS2PORT_PAD="$pad" PS2PORT_FRAME_DIR="$d/frames" "$@" \
     ./runner-aarch64 /userdata/ps2bench/game/SLUS_208.26 > "$d/log.txt" 2>&1
 rc=$?
+kill "$fpid" 2>/dev/null
 wait
+awk '{ n++; f += $2; c += $3; if ($2 < lo || lo == 0) lo = $2 } END { if (n) printf "clock: avg %.0f kHz, min %d, avg cooling state %.1f (freq.txt)\n", f / n, lo, c / n }' "$d/freq.txt"
 echo "exit $rc after $(($(date +%s) - start)) s, $(ls "$d/frames" | wc -l) screenshots: $d"
 grep -a '\[native\]\|\[display\]\|\[gles\]\|^gl:' "$d/log.txt" | cut -c1-120
 grep -a '^\[m5\]' "$d/log.txt" | cut -c1-240
-for f in samples.bin samples.bin.maps samples.bin.threads; do [ -f "$f" ] && [ "$f" -nt last-boot.txt ] && mv "$f" "$d/"; done
+for f in samples.bin samples.bin.maps samples.bin.threads samples.bin.lr samples.bin.ee; do [ -f "$f" ] && [ "$f" -nt last-boot.txt ] && mv "$f" "$d/"; done
 [ -f "$d/samples.bin" ] && echo "samples: $d/samples.bin (PS2PORT_SAMPLE=samples.bin)"
 tail -2 "$d/log.txt" | cut -c1-120

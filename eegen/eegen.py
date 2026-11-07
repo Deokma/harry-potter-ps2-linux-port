@@ -158,6 +158,43 @@ class Ins:
         self.rs = self.rd = 0
 
 
+# Borrowed instructions. For what eegen has no semantics of its own for (COP2 macro instructions, most MMI, ADDI, the rest of COP0,
+# MTSAB/MTSAH), the C++ PS2Recomp generated for that instruction: the lines after its comment in out-b's FUN_ files. They work on the
+# context, so the GPRs an instruction reads are spilled before and those it writes reloaded after (eegen keeps only the low 64 bits in
+# locals; the rest already lives in the context). The same semantics by construction. --borrow DIR loads them.
+BORROW = {}
+_BORROW_LINE = re.compile(r"^    // 0x([0-9a-f]+): 0x([0-9a-f]+)\s+(\S+)")
+_BORROW_REFUSE = ("goto", "return", "label_", "dispatchGuestBranch", "case ", "throw")
+
+
+def load_borrow(directory):
+    for path in sorted(Path(directory).glob("FUN_*.cpp")):
+        cur = None
+        addr = 0
+        for line in path.read_text(errors="replace").splitlines():
+            m = _BORROW_LINE.match(line)
+            if m:
+                cur = None
+                addr = int(m.group(1), 16)
+                if "Delay Slot" in line or addr in BORROW:
+                    continue
+                cur = [int(m.group(2), 16), m.group(3), []]
+                BORROW[addr] = cur
+                continue
+            if cur is None:
+                continue
+            s = line.strip()
+            if s.startswith("label_") or s == "}":
+                cur = None  # what follows belongs to the next instruction or ends the function
+                continue
+            if s.startswith("ctx->pc = 0x") and s.lower() != f"ctx->pc = 0x{addr:x}u;":
+                continue  # a re-entry marker for the next label
+            if s:
+                cur[2].append(s)
+    for a in BORROW:
+        BORROW[a] = (BORROW[a][0], BORROW[a][1], " ".join(BORROW[a][2]))
+
+
 def translate(addr, w, hw):
     """Decode one instruction (hw: hardware semantics instead of PS2Recomp's)."""
     i = Ins(addr, w)
@@ -171,6 +208,14 @@ def translate(addr, w, hw):
         i.mn, i.code = mn, code
         i.uses, i.defs = set(uses), set(defs)
         return i
+
+    def borrow(uses=(), defs=()):
+        """PS2Recomp's code for this instruction (BORROW), or None"""
+        b = BORROW.get(addr)
+        if not b or b[0] != w or not b[2] or any(k in b[2] for k in _BORROW_REFUSE):
+            return None
+        u, d = gpr(*uses), gpr(*defs)
+        return op_(b[1], f"{spill(u)} {{ {b[2]} }} {reload(d)}".strip(), u, d)
 
     def set_s32(n, e):
         return f"r{n} = (uint64_t)(int64_t)(int32_t)({e});" if n else ""
@@ -297,6 +342,10 @@ def translate(addr, w, hw):
         if rt in regimm:
             mn, o, likely = regimm[rt]
             return branch(mn, f"{val} {o} 0", gpr(rs), likely)
+        if rt in (0x18, 0x19):  # mtsab, mtsah
+            b = borrow((rs,))
+            if b:
+                return b
         raise Unsupported(f"regimm 0x{rt:02x}")
 
     if op in (2, 3):
@@ -338,6 +387,15 @@ def translate(addr, w, hw):
             return op_("di", "ctx->cop0_status &= ~0x10000;")
         if rs == 0 and rd == 9:
             return op_("mfc0", set_s32(rt, "(int32_t)ps2portReadCount(ctx)" if RUNTIME_COUNT else "(int32_t)ctx->cop0_count"), (), gpr(rt))
+        b = None
+        if rs == 0:
+            b = borrow((), (rt,))
+        elif rs == 4:
+            b = borrow((rt,))
+        elif rs == 0x10 and fn != 0x18:  # not eret
+            b = borrow()
+        if b:
+            return b
         raise Unsupported("cop0")
 
     if op == 0x11:
@@ -398,6 +456,9 @@ def translate(addr, w, hw):
                     "int64_t m_ = a_ + p_; ctx->lo = Ps2SignExt32ToU64((uint32_t)m_); "
                     f"ctx->hi = Ps2SignExt32ToU64((uint32_t)(m_ >> 32)); {set_s32(rd, 'm_')} }}")
             return op_("madd", code, gpr(rs, rt), gpr(rd))
+        b = borrow((rs, rt, rd), (rd,))
+        if b:
+            return b
         raise Unsupported(f"mmi 0x{fn:02x}")
 
     lq_ea = f"({ea} & ~15u)" if hw else ea  # PS2Recomp keeps the low bits
@@ -470,6 +531,18 @@ def translate(addr, w, hw):
         return op_("lqc2", f"ctx->vu0_vf[{rt}] = eg_lqc2(rdram, ctx, runtime, {lq_ea});", gpr(rs))
     if op == 0x3E:
         return op_("sqc2", f"eg_sqc2(rdram, ctx, runtime, {lq_ea}, ctx->vu0_vf[{rt}]);", gpr(rs))
+    b = None
+    if op == 0x08:  # addi, with PS2Recomp's overflow exception
+        b = borrow((rs,), (rt,))
+    elif op == 0x12 and rs != 8:  # COP2, not its branches
+        if rs in (1, 2):  # qmfc2, cfc2
+            b = borrow((), (rt,))
+        elif rs in (5, 6):  # qmtc2, ctc2
+            b = borrow((rt,))
+        else:  # macro instructions work on VU0 registers only
+            b = borrow()
+    if b:
+        return b
     raise Unsupported(f"opcode 0x{op:02x}")
 
 
@@ -1024,9 +1097,13 @@ def main():
     ap.add_argument("--no-float-groups", action="store_true")
     ap.add_argument("--runtime-count", action="store_true", help="read Count from the runtime (ps2portReadCount), not from the context")
     ap.add_argument("--checkpoints", action="store_true", help="loop checkpoints, which a whole game needs")
+    ap.add_argument("--borrow", help="PS2Recomp's output directory: its code for instructions eegen lacks (COP2 macro, MMI, ADDI, COP0)")
     args = ap.parse_args()
     global RUNTIME_COUNT
     RUNTIME_COUNT = args.runtime_count
+    if args.borrow:
+        load_borrow(args.borrow)
+        print(f"borrowable instructions: {len(BORROW)}")
     prog = Program(args)
     ends = dict(prog.funcs)
     wanted = []

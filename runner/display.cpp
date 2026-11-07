@@ -63,6 +63,7 @@ extern "C" [[noreturn]] void __wrap___cxa_throw(void *object, std::type_info *ty
 void ps2portNativeCounts(uint64_t out[5]) __attribute__((weak));
 extern uint64_t g_ps2portTouch[10];
 extern uint64_t g_ps2portVif1Irqs;
+extern uint64_t g_ps2portGatherBytes[2];
 uint64_t ps2portGsThreadCounts(int which);
 
 namespace
@@ -101,6 +102,9 @@ namespace
     // The profile: pairs of program counter and thread id
     constexpr size_t kMaxSamples = 1u << 20;
     uint64_t g_samples[kMaxSamples * 2];
+    uint64_t g_sampleLr[kMaxSamples]; // the link register, which in a leaf function (libc's copies) is where it was called from
+    int32_t g_sampleEe[kMaxSamples];   // the EE guest thread running then (meaningful for the game thread's samples)
+    const EeScheduler *g_sampleScheduler = nullptr;
     volatile size_t g_sampleCount = 0;
 
     void onSampleTick(int, siginfo_t *, void *uc)
@@ -111,6 +115,8 @@ namespace
         const size_t k = g_sampleCount;
 #if defined(__aarch64__)
         g_samples[k * 2] = u->uc_mcontext.pc;
+        g_sampleLr[k] = u->uc_mcontext.regs[30];
+        g_sampleEe[k] = g_sampleScheduler ? g_sampleScheduler->currentThreadId() : -1;
 #else
         g_samples[k * 2] = static_cast<uint64_t>(u->uc_mcontext.gregs[REG_RIP]);
 #endif
@@ -145,6 +151,16 @@ namespace
             if (FILE *f = std::fopen(path, "wb"))
             {
                 std::fwrite(g_samples, sizeof(uint64_t) * 2, g_sampleCount, f);
+                std::fclose(f);
+            }
+            if (FILE *f = std::fopen((std::string(path) + ".lr").c_str(), "wb"))
+            {
+                std::fwrite(g_sampleLr, sizeof(uint64_t), g_sampleCount, f);
+                std::fclose(f);
+            }
+            if (FILE *f = std::fopen((std::string(path) + ".ee").c_str(), "wb"))
+            {
+                std::fwrite(g_sampleEe, sizeof(int32_t), g_sampleCount, f);
                 std::fclose(f);
             }
             // where the libraries are, and which thread is which
@@ -297,6 +313,7 @@ bool ps2portDisplayInit(PS2Runtime &runtime)
 
 void ps2portDisplayFrame(PS2Runtime &runtime)
 {
+    g_sampleScheduler = &runtime.eeScheduler();
     static const auto start = std::chrono::steady_clock::now();
     static uint64_t last = ~0ull;
     static uint64_t shown = 0;
@@ -413,14 +430,19 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
             for (int k = 0; k < 11; ++k)
                 per[k] = (touch[k] - touchBefore[k]) * 1000.0 / span;
             std::memcpy(touchBefore, touch, sizeof(touch));
-            static uint64_t gsBefore[3] = {};
-            uint64_t gs[3];
-            for (int k = 0; k < 3; ++k)
+            static uint64_t gsBefore[5] = {};
+            uint64_t gs[5];
+            for (int k = 0; k < 5; ++k)
                 gs[k] = ps2portGsThreadCounts(k);
-            std::fprintf(stderr, "[m5t] t=%.0f per s: gs priv r %.0f w %.0f; vif1 r %.0f w %.0f; gif regs %.0f; channel reads %.0f; vu1 mem %.0f; fifo %.0f; kicks vif1 %.0f gif %.0f; vif1 irqs %.0f; gs thread jobs %.0f handed %.0f waits %.0f\n", seconds,
+            std::fprintf(stderr, "[m5t] t=%.0f per s: gs priv r %.0f w %.0f; vif1 r %.0f w %.0f; gif regs %.0f; channel reads %.0f; vu1 mem %.0f; fifo %.0f; kicks vif1 %.0f gif %.0f; vif1 irqs %.0f; gs thread jobs %.0f handed %.0f waits %.0f; in jobs %.0f ms of which waiting for the EE %.0f ms\n", seconds,
                          per[0], per[1], per[2], per[3], per[4], per[5], per[6], per[7], per[8], per[9], per[10], (gs[2] - gsBefore[2]) * 1000.0 / span,
-                         (gs[0] - gsBefore[0]) * 1000.0 / span, (gs[1] - gsBefore[1]) * 1000.0 / span);
+                         (gs[0] - gsBefore[0]) * 1000.0 / span, (gs[1] - gsBefore[1]) * 1000.0 / span, (gs[4] - gsBefore[4]) / 1e6 * 1000.0 / span,
+                         (gs[3] - gsBefore[3]) / 1e6 * 1000.0 / span);
             std::memcpy(gsBefore, gs, sizeof(gs));
+            static uint64_t gatherBefore[2] = {};
+            std::fprintf(stderr, "[m5g] t=%.0f DMA chains gathered %.2f MB/s, of which already copied in the same chain %.2f MB/s\n", seconds,
+                         (g_ps2portGatherBytes[0] - gatherBefore[0]) * 1000.0 / span / 1048576.0, (g_ps2portGatherBytes[1] - gatherBefore[1]) * 1000.0 / span / 1048576.0);
+            std::memcpy(gatherBefore, g_ps2portGatherBytes, sizeof(gatherBefore));
         }
         std::fprintf(stderr, "[m5m] t=%.0f tick/s %.1f drawn/s %.1f; palettes %.0f, targets %.1f MB, depth %.0f (%.1f MB), textures %.0f (%.1f MB)\n", seconds, (tick - tickBefore) * 1000.0 / span, frames * 1000.0 / span,
                      gpu[12], gpu[13] / 1048576.0, gpu[14], gpu[15] / 1048576.0, gpu[16], gpu[17] / 1048576.0);
