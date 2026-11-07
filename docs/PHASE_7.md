@@ -75,3 +75,53 @@ Per core: 66, 70, 70, 73 % busy.
 
 - **Stage A:** the chain copies to a stage of their own before it (about 5.5 ms a frame; the cores are 66-73 % busy); then VU1's translated code, the largest single item (about 22 ms).
 - **Game thread:** resume entries at call return addresses too (`FUN_002c4fe0`, 5 %), the tag walk (`writeIORegister` 4 %), scheduler and runtime (12 %). These shorten the frame only once stage A does.
+
+## Wrap-up (2026-11-08): coverage, soak, game speed, plans, controls
+
+### Coverage (`panel-012350`, the full scripted path, 1.416 GHz; measured, `scripts/frame_stats.py`)
+
+| Stretch | p50 ms | p95 ms | max ms | CPU zone | cooling max |
+|---|---|---|---|---|---|
+| **Gameplay, the shop (225-280 s)** | **43.6** | **54.1** | 65.2 | 73.4-75.1 C | 0 |
+| Intro (report only) | 38.3 | 70.6 | 545.5 | | 0 |
+| Menu | 47.7 | 50.7 | 69.8 | | 0 |
+| Loading | 33.8 | 48.5 | 122.7 | | 0 |
+| Quirrell cutscene (report only) | 36.8 | 66.9 | 434.5 | | 0 |
+| Street / Hagrid (report only) | 38.9 | 67.8 | 327.8 | | 1 |
+| Ollivanders | 34.3 | 53.9 | 83.2 | | 0 |
+| Shop cutscene (report only) | 49.9 | 64.0 | 79.3 | | 1 |
+
+Gameplay p50 43.6 ms: under the 50 ms line. The large maxima are loads and scene changes. Memory at the end: anon 150 MB, file 257 MB, Mali mappings 27 MB.
+
+### Soak (`panel-013121`, the shop, 1.416 GHz; measured)
+
+Planned 1,720 s (idle, then a scripted walk from 900 s). **The guard stopped it at 85 C after about 806 s**, so the walk never ran. Per 120 s:
+
+| s | p50 ms | p95 ms | CPU zone | cooling max | anon / file / Mali MB |
+|---|---|---|---|---|---|
+| 0-120 (boot, menu) | 33.6 | 61.0 | 56.8-70.7 C | 0 | 129 / 186 / 27 |
+| 120-240 | 42.0 | 64.4 | 68.0-77.7 C | 2 | 145 / 262 / 27 |
+| 240-360 | 43.5 | 52.7 | 76.6-79.9 C | 1 | 145 / 264 / 27 |
+| 360-480 | 43.5 | 54.3 | 79.0-81.5 C | 1 | 145 / 261 / 27 |
+| 480-600 | 43.5 | 52.9 | 80.5-82.7 C | 2 | 145 / 262 / 27 |
+| 600-720 | 43.5 | 55.0 | 81.8-83.9 C | 2 | 145 / 262 / 27 |
+| 720-806 | 43.5 | 54.0 | 82.8-85.3 C | 2 | 145 / 262 / 27 |
+
+- **No drift and no leak in 13 minutes:** p50 flat at 43.5 ms, the clock never under 1,416 MHz (cooling states 1-2 did not lower it), anon memory flat at 145 MB, the Mali mappings flat at 27 MB.
+- **Heat is the limit:** the CPU zone climbs about 2 C a minute after the first five minutes and passes 85 C at about 13 minutes in this run. The kernel's passive trips (60/70 C) did not lower the clock.
+- **Guard bug, fixed:** the guard's stop reached the shell but not the runner, which ran on at the default clock until it was killed by hand (87.4 C at that point, no reboot, uptime 4.5 h). `device_guard.sh` now starts the command in its own session (`setsid`), stops the whole group (TERM, then KILL 3 s later) and kills what outlived it after a timeout. Checked on the device: no process left over.
+
+### Game speed (from the code; inference, not measured against a clock)
+
+The game counts vblanks in its handler (`0x2cd788`, count at `0x328490`) and waits for 2 per frame (`0x2cd6a0`, the number at `0x3A4FD8`). The frame end (`0x2e2268`) stores the vblanks that passed (`0x3287F0`), and two functions read it (through `0x2e2a20` and `0x2ea250`): the game can scale by elapsed time. But the runtime's vsync follows charged guest cycles, and the EE never idles, so **the game always sees 2 vblanks a frame: 33.3 ms of game time for about 45 ms of real time, about 73 % speed** (slow motion, not dropped steps). Making vsync follow real time would show it 3 vblanks a frame; whether the game then steps further (variable step) or keeps its pace is not checked.
+
+### Plans
+
+`docs/PLAN_INPUT.md` (input, now implemented, below) and `docs/PLAN_AUDIO.md` (audio; plan only).
+
+### Controls (user's request, 2026-11-08)
+
+- `runner/pad_sdl.cpp`: the raylib gamepad calls `ps2_pad.cpp` makes (`IsGamepadAvailable`, `IsGamepadButtonDown`, `GetGamepadAxisMovement`), over SDL2's GameController API loaded at run time (`bench/src/sdl_dyn.c`, optional symbols). SDL on the main thread (drained every displayed vsync); the EE thread reads atomics. Positional mapping as in the plan; L2/R2 from the trigger axes; sticks with a 12 % dead zone.
+- **On the device (measured, `play-015720`):** SDL 2.30.12 has no built-in mapping for the "Anbernic RG40XX-H Controller"; the runner then loads PortMaster's Knulli `gamecontrollerdb.txt` (526 mappings) and opens it as `ANBERNIC-keys` (`a:b4, b:b3, x:b5, y:b6`, D-pad on hat 0, two sticks). **Not checked yet: which physical button is SDL's `a`** (needs the user's hands; `PS2PORT_PAD_SWAP_FACE=1` swaps Cross/Circle and Square/Triangle). Every change is logged (`PS2PORT_PAD_LOG=1`).
+- Quit: Menu + Start, or L1 + R1 + Select + Start, held for a second; SIGTERM too (SDL turns it into a quit event, handled now).
+- Play: `sh scripts/play.sh [MINUTES [VAR=VALUE...]]` (`runner/device_play.sh` on the device, under the guard: 1.416 GHz, 85 C).

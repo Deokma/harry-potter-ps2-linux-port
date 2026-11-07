@@ -134,9 +134,10 @@ inline int GetScreenWidth() { return 640; }
 inline int GetScreenHeight() { return 448; }
 inline bool IsKeyDown(int) { return false; }
 inline bool IsKeyPressed(int) { return false; }
-inline bool IsGamepadAvailable(int) { return false; }
-inline bool IsGamepadButtonDown(int, int) { return false; }
-inline float GetGamepadAxisMovement(int, int) { return 0.0f; }
+// The gamepad calls ps2_pad.cpp makes: real input from SDL2 (runner/pad_sdl.cpp).
+bool IsGamepadAvailable(int gamepad);
+bool IsGamepadButtonDown(int gamepad, int button);
+float GetGamepadAxisMovement(int gamepad, int axis);
 
 inline Image GenImageColor(int width, int height, Color color)
 {

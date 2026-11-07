@@ -48,5 +48,28 @@ int sdl_load(char *err, size_t n)
     SYM(PauseAudioDevice, "SDL_PauseAudioDevice");
     SYM(CloseAudioDevice, "SDL_CloseAudioDevice");
 #undef SYM
+    /* optional: game controllers */
+#define OPT(field, name)                 \
+    do {                                 \
+        void *p = dlsym(h, name);        \
+        memcpy(&sdl.field, &p, sizeof p); \
+    } while (0)
+    OPT(InitSubSystem, "SDL_InitSubSystem");
+    OPT(NumJoysticks, "SDL_NumJoysticks");
+    OPT(IsGameController, "SDL_IsGameController");
+    OPT(JoystickNameForIndex, "SDL_JoystickNameForIndex");
+    OPT(JoystickGetDeviceGUID, "SDL_JoystickGetDeviceGUID");
+    OPT(JoystickGetGUIDString, "SDL_JoystickGetGUIDString");
+    OPT(GameControllerOpen, "SDL_GameControllerOpen");
+    OPT(GameControllerName, "SDL_GameControllerName");
+    OPT(GameControllerMapping, "SDL_GameControllerMapping");
+    OPT(Free, "SDL_free");
+    OPT(GameControllerGetAttached, "SDL_GameControllerGetAttached");
+    OPT(GameControllerClose, "SDL_GameControllerClose");
+    OPT(GameControllerGetButton, "SDL_GameControllerGetButton");
+    OPT(GameControllerGetAxis, "SDL_GameControllerGetAxis");
+    OPT(RWFromFile, "SDL_RWFromFile");
+    OPT(GameControllerAddMappingsFromRW, "SDL_GameControllerAddMappingsFromRW");
+#undef OPT
     return 0;
 }

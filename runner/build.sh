@@ -42,6 +42,9 @@ stale=$(find "$repo/gsgles" "$repo/bench/src" -maxdepth 1 -name '*.h' -newer "$o
 job "$glflags" "$repo/gsgles/gs_gles_backend.cpp" "$out/own/gs_gles_backend.o" "$stale"
 job "$glflags" "$repo/gsgles/gsplay_gl.cpp" "$out/own/gsplay_gl.o" "$stale"
 job "$glflags" "$src/display.cpp" "$out/own/display.o" "$stale"
+job "$glflags" "$src/pad_sdl.cpp" "$out/own/pad_sdl.o" "$stale"
+# the raylib stand-in declares the gamepad calls pad_sdl.cpp defines: what includes it is rebuilt when it changes
+[ "$src/host/raylib.h" -nt "$out/lib/ps2_pad.o" ] && rm -f "$out/lib/ps2_pad.o" "$out/lib/kernel_Stubs_Pad.o"
 for c in gl_dyn sdl_dyn; do
     o=$out/own/$c.o
     if [ ! -f "$o" ] || [ "$repo/bench/src/$c.c" -nt "$o" ] || [ "$repo/bench/src/gl_funcs.h" -nt "$o" ]; then

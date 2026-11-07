@@ -11,6 +11,31 @@
 #define BSDL_INIT_AUDIO 0x00000010u
 #define BSDL_INIT_VIDEO 0x00000020u
 #define BSDL_INIT_EVENTS 0x00004000u
+#define BSDL_INIT_JOYSTICK 0x00000200u
+#define BSDL_INIT_GAMECONTROLLER 0x00002000u
+
+/* SDL_GameControllerButton and SDL_GameControllerAxis */
+#define BSDL_CONTROLLER_BUTTON_A 0
+#define BSDL_CONTROLLER_BUTTON_B 1
+#define BSDL_CONTROLLER_BUTTON_X 2
+#define BSDL_CONTROLLER_BUTTON_Y 3
+#define BSDL_CONTROLLER_BUTTON_BACK 4
+#define BSDL_CONTROLLER_BUTTON_GUIDE 5
+#define BSDL_CONTROLLER_BUTTON_START 6
+#define BSDL_CONTROLLER_BUTTON_LEFTSTICK 7
+#define BSDL_CONTROLLER_BUTTON_RIGHTSTICK 8
+#define BSDL_CONTROLLER_BUTTON_LEFTSHOULDER 9
+#define BSDL_CONTROLLER_BUTTON_RIGHTSHOULDER 10
+#define BSDL_CONTROLLER_BUTTON_DPAD_UP 11
+#define BSDL_CONTROLLER_BUTTON_DPAD_DOWN 12
+#define BSDL_CONTROLLER_BUTTON_DPAD_LEFT 13
+#define BSDL_CONTROLLER_BUTTON_DPAD_RIGHT 14
+#define BSDL_CONTROLLER_AXIS_LEFTX 0
+#define BSDL_CONTROLLER_AXIS_LEFTY 1
+#define BSDL_CONTROLLER_AXIS_RIGHTX 2
+#define BSDL_CONTROLLER_AXIS_RIGHTY 3
+#define BSDL_CONTROLLER_AXIS_TRIGGERLEFT 4
+#define BSDL_CONTROLLER_AXIS_TRIGGERRIGHT 5
 
 #define BSDL_WINDOW_FULLSCREEN 0x00000001u
 #define BSDL_WINDOW_OPENGL 0x00000002u
@@ -36,6 +61,12 @@
 #define BSDL_AUDIO_S16LSB 0x8010u
 
 typedef struct bsdl_window bsdl_window;
+typedef struct bsdl_gamecontroller bsdl_gamecontroller;
+typedef struct bsdl_joystick bsdl_joystick;
+typedef struct bsdl_rwops bsdl_rwops;
+typedef struct {
+    uint8_t data[16];
+} bsdl_joystick_guid;
 typedef void *bsdl_glcontext;
 typedef uint32_t bsdl_audio_device;
 
@@ -86,6 +117,23 @@ typedef struct {
                                          bsdl_audio_spec *obtained, int allowed_changes);
     void (*PauseAudioDevice)(bsdl_audio_device dev, int pause_on);
     void (*CloseAudioDevice)(bsdl_audio_device dev);
+    /* Game controllers (runner/pad_sdl.cpp). Optional: NULL when the library lacks them. */
+    int (*InitSubSystem)(uint32_t flags);
+    int (*NumJoysticks)(void);
+    int (*IsGameController)(int index);
+    const char *(*JoystickNameForIndex)(int index);
+    bsdl_joystick_guid (*JoystickGetDeviceGUID)(int index);
+    void (*JoystickGetGUIDString)(bsdl_joystick_guid guid, char *out, int n);
+    bsdl_gamecontroller *(*GameControllerOpen)(int index);
+    const char *(*GameControllerName)(bsdl_gamecontroller *c);
+    char *(*GameControllerMapping)(bsdl_gamecontroller *c);
+    void (*Free)(void *p);
+    int (*GameControllerGetAttached)(bsdl_gamecontroller *c);
+    void (*GameControllerClose)(bsdl_gamecontroller *c);
+    uint8_t (*GameControllerGetButton)(bsdl_gamecontroller *c, int button);
+    int16_t (*GameControllerGetAxis)(bsdl_gamecontroller *c, int axis);
+    bsdl_rwops *(*RWFromFile)(const char *file, const char *mode);
+    int (*GameControllerAddMappingsFromRW)(bsdl_rwops *rw, int freerw);
 } bsdl_api;
 
 extern bsdl_api sdl;
