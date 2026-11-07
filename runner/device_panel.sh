@@ -19,8 +19,9 @@ for t in $at; do
 done
 start=$(date +%s)
 # The CPU zone has passive trips at 60 and 70 C (power_allocator): above them the kernel lowers the clock whatever is pinned. Every 2 s:
-# seconds, CPU kHz, cooling state of the CPU (0 = none, 8 = most), CPU zone temperature.
-( while :; do echo "$(($(date +%s) - start)) $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq) $(cat /sys/class/thermal/cooling_device0/cur_state) $(cat /sys/class/thermal/thermal_zone0/temp)"; sleep 2; done ) > "$d/freq.txt" 2>/dev/null &
+# seconds, CPU kHz, cooling state of the CPU (0 = none, 8 = most), CPU zone temperature, then the cpu0-3 lines of /proc/stat joined by |
+# (per-core load: scripts/core_load.py).
+( while :; do echo "$(($(date +%s) - start)) $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq) $(cat /sys/class/thermal/cooling_device0/cur_state) $(cat /sys/class/thermal/thermal_zone0/temp) $(grep '^cpu[0-9]' /proc/stat | tr '\n' '|')"; sleep 2; done ) > "$d/freq.txt" 2>/dev/null &
 fpid=$!
 env PS2PORT_DISPLAY=1 PS2PORT_M5_STATS=1 PS2PORT_NATIVE_STATS=1 PS2PORT_HEADLESS=1 PS2PORT_RUN_SECONDS="$secs" PS2PORT_PAD="$pad" PS2PORT_FRAME_DIR="$d/frames" "$@" \
     ./runner-aarch64 /userdata/ps2bench/game/SLUS_208.26 > "$d/log.txt" 2>&1

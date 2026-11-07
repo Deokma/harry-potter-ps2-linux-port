@@ -17,11 +17,13 @@ Phase results are in `docs/PHASE_N.md`; the current work is `docs/PHASE_4.md`
 - Don't assume an existing project works; check it.
 - Be honest about feasibility. Never claim something runs on the device
   unless it ran there; PC (and qemu-user) timings are not device timings.
-- Stop rule (user, 2026-11-06): stop only if (a) a measured main frame exceeds
-  its budget (50 ms in the street, 33.3 ms elsewhere), (b) a decision from the
-  user is needed, or (c) the device misbehaves (reboot, over 85 C). Otherwise
-  continue to the next milestone without asking. Record results in
-  `docs/PHASE_N.md`. Don't push.
+- Stop rule (user, 2026-11-07, Phase 7; replaces the 2026-11-06 rule (a)):
+  judge the measured gameplay frame after a step by this table, not by the
+  budget alone: <=50 ms continue; 50-55 ms report and ask the user; >55 ms stop
+  and report options. Being over budget is not by itself a reason to stop. Also
+  stop if (b) a decision from the user is needed, or (c) the device misbehaves
+  (reboot, over 85 C). Otherwise continue to the next step without asking.
+  Record results in `docs/PHASE_N.md`. Don't push.
 - Keep `NOTES.md` updated (decisions, open questions, commands that worked).
   Small commits, clear messages; scripts in `scripts/` over manual steps.
 - Never type passwords. Device SSH is key-based only (port 2222); after a
