@@ -15,9 +15,9 @@ target=${1:-x86}
 out=$tp/build-m2/$target
 mkdir -p "$out"
 case $target in
-    x86) cxx=g++; arch="-msse4.1"; link="-ldl -lpthread" ;;
+    x86) cxx=g++; cc=gcc; arch="-msse4.1"; link="-ldl -lpthread" ;;
     aarch64)
-        cxx=aarch64-linux-gnu-g++
+        cxx=aarch64-linux-gnu-g++; cc=aarch64-linux-gnu-gcc
         arch="-march=armv8-a+fp+simd+crypto+crc -mtune=cortex-a53 -DUSE_SSE2NEON -I$tp/sse2neon -include $src/host/glibc_compat.h"
         # the device's libstdc++ is older, as for gsplay
         link="-static-libstdc++ -static-libgcc -ldl -lpthread" ;;
@@ -32,7 +32,20 @@ job() {
     echo "$cxx $common $1 -c $2 -o $3" >> "$out/jobs.txt"
 }
 
-mkdir -p "$out/lib" "$out/iop" "$out/fun" "$out/eg" "$out/own"
+mkdir -p "$out/lib" "$out/iop" "$out/fun" "$out/eg" "$out/own" "$out/khr"
+# the GLES backend and the display: firmware SDL2 and GLES through dlopen, as gsgles/build.sh does
+for d in GLES2 GLES3 KHR; do [ -e "$out/khr/$d" ] || cp -r "/usr/include/$d" "$out/khr/$d"; done
+glflags="-O3 -DGSPLAY_GLES -I$repo/bench/src -I$out/khr -I$repo/gsgles"
+stale=$(find "$repo/gsgles" "$repo/bench/src" -maxdepth 1 -name '*.h' -newer "$out/own/display.o" 2>/dev/null | head -1)
+job "$glflags" "$repo/gsgles/gs_gles_backend.cpp" "$out/own/gs_gles_backend.o" "$stale"
+job "$glflags" "$repo/gsgles/gsplay_gl.cpp" "$out/own/gsplay_gl.o" "$stale"
+job "$glflags" "$src/display.cpp" "$out/own/display.o" "$stale"
+for c in gl_dyn sdl_dyn; do
+    o=$out/own/$c.o
+    if [ ! -f "$o" ] || [ "$repo/bench/src/$c.c" -nt "$o" ] || [ "$repo/bench/src/gl_funcs.h" -nt "$o" ]; then
+        $cc -std=c11 -D_GNU_SOURCE -O2 -w $arch -I"$out/khr" -I"$repo/bench/src" -c "$repo/bench/src/$c.c" -o "$o"
+    fi
+done
 for f in game_overrides gs/ps2_gif_arbiter ps2_audio ps2_audio_vag gs/ps2_gs_memory gs/gs_frontend gs/gs_cpu_backend ps2_iop_host ps2_memory ps2_pad ps2_rom_device ps2_vfs ps2_runtime ps2_vif1_interpreter vu/ps2_vu1_core vu/ps2_vu1_upper vu/ps2_vu1_lower games_database; do
     job "-O2" "$rt/src/lib/$f.cpp" "$out/lib/$(basename "$f").o"
 done

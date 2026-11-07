@@ -190,6 +190,10 @@ inline void ClearBackground(Color) {}
 inline void DrawTexturePro(Texture2D, Rectangle, Rectangle, Vector2, float, Color) {}
 inline void EndDrawing()
 {
+    // With a real display, its own swap paces the loop.
+    static const bool paced = std::getenv("PS2PORT_DISPLAY") != nullptr;
+    if (paced)
+        return;
     static auto next = std::chrono::steady_clock::now();
     next += std::chrono::microseconds(16667);
     const auto now = std::chrono::steady_clock::now();

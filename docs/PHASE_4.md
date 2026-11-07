@@ -593,3 +593,56 @@ the device and a steady one on the PC, but that wasn't shown. A fixed clock woul
 - eegen still runs without float groups (`--no-float-groups`), because the mode switches between eegen's code and the runtime's aren't in the runner. The 24.5 ms replay figure had them, so expect the main frame to be slower until they're in.
 - `STREAM.IRX` still runs in the emulated IOP; its cost on the device hasn't been separated out.
 - New Game was not tried on the device.
+
+# M5 result: the title screen on the device (2026-11-07)
+
+**Phase 4's goal is met.** The game runs natively on the RG40XX H and draws its title menu through the Mali-G31: EE through eegen, VU0 and VU1 translated, GS through GLES. Audio and pad are stubbed, with scripted presses.
+
+| Done when | Result |
+|---|---|
+| Title on the panel | **Yes.** `/dev/fb0`, which the panel scans out, holds the menu at 50, 62 and 70 s (`panel-094855/panel-*.raw`). Read back from the framebuffer: nobody at this end has looked at the panel itself |
+| Screenshot in test mode | **Yes.** `PS2PORT_FRAME_DIR` writes what the GPU drew, every 120 vsyncs. Menu against the software GS's: mean difference 1.00 and 2.67 after M3's 1 pixel blur and shift, tolerance 6 |
+| Frame time and temperature logged | **Yes.** `PS2PORT_M5_STATS` logs a line every 5 s. Below |
+
+## Numbers
+
+Device, 1.416 GHz, frontend stopped, GPU clock left to its governor. On the menu (`panel-094855`, t = 60-75 s):
+
+| | |
+|---|---|
+| Vsyncs | **60.0 per second** |
+| Game frames | **23.5 per second, 42.4 ms on average,** about half 2 vsyncs and half 3 |
+| Game thread | **28 % of one core: about 12 ms per game frame,** against a 33.3 ms budget |
+| Main thread (GL) | 7 %. Executing and presenting a frame 1.1 ms on average; the 36 ms peaks are the screenshot readback |
+| Mali's worker thread | 5 % |
+| Waiting on the display | 11 ms per vsync on average, on the main thread only |
+| Temperature | Peak 67.7 C in 110 s; 69.9 C in the 250 s run below |
+| Crashes, reboots | None |
+
+The 2-and-3 vsync pattern with so much time to spare looks like 3:2 pulldown: M1 found the menu runs inside the `frontend.thp` movie loop, and movies are commonly 24 fps. That fits the figures but wasn't shown from the code. After the idle
+timeout the game thread falls to 13 %. On the loading screen after New Game, frames are 2 vsyncs, 34.5 ms on average, at 27 %.
+
+**These are the menu's numbers, not the game's.** The heavy frames measured in M3 and M4 have not run on this path. There, the game thread would carry EE, VIF, VU1, GIF parsing and VRAM writes on one core; summed from the earlier milestones that
+is far over budget (24 ms + 39 ms + about 25 ms in gameplay). It's an estimate from separate measurements, not a measured frame. The way out is known: VU1 and VIF on their own thread, as M4 suggests.
+
+Heavy stretches on the way to the menu: the game thread is at 100 % and frames take 125-280 ms during loading, with brief spikes above that. Those are load times, not a frame budget miss, since the loader runs in EE too.
+
+## What it took
+
+- **The backend split in two.** Everything from the frontend now only records. Texture and CLUT uploads, program compiles and render target changes are ops in the command stream, with GL names from a pool made ahead of time. A new `LatchFrame`, called with the
+  frontend's state lock held, takes the frame; `Present` runs it on the main thread, which owns GL. So the game thread never waits on the driver or the display. That is the GL half of the thread split M3 called for. Pictures from `gsplay` on Mesa are **byte-identical** before and after, on `F01_0`, `I01_1` and `N02_1`.
+- `runner/display.cpp` sets up SDL and GL on the main thread, puts the backend behind the frontend, and shows one frame per vsync. `runner/device_panel.sh` runs it on the device and copies `/dev/fb0` at given times.
+- `DISPFB` never changes in this game, so counting flips measured nothing. A game frame is now taken from the game's own vblank count at `0x328490`, which resets when its main loop goes on.
+
+## Open
+
+- **New Game stops at the loading bar's halfway point.** It got there in 30 s, then stayed for over 150 s (`panel-095233`) with the game thread at 27 %. M1's run ended at the same place, so it's not new. Not investigated. The next file in M1's log was `CUT\HPM02.HOG`, and movies are stubbed.
+- **The game's clock isn't locked to real time while the game thread is busy.** The scheduler fires vblank on charged EE cycles and only paces to the host clock when idle, and eegen charges far fewer cycles than PS2Recomp's code does. So vsyncs per second range from 6.6 to 220 in loading, and hold 60 only when there's idle time. It doesn't matter on the menu, and it will in gameplay.
+- Real pad input and audio: stubbed, as planned. Movies: stubbed, so the menu's background movie isn't there.
+- eegen still runs without float groups in the runner, so EE is slower here than the 24.5 ms replay figure. VU1 runs on the game thread.
+- The fetch path for blends GLES can't express, mipmaps, partial FBMSK and the rest of M3's "not implemented" list are unchanged. FBMSK partial masks matter once lighting runs, now that VU1 produces the right masks.
+
+Git Bash, to see it on the panel:
+```
+DEVICE_TIMEOUT=150 sh scripts/device_detach.sh -g private/third_party/build-m2/aarch64/runner-aarch64 runner/device_panel.sh -- sh device_panel.sh 110 '"CROSS@5+0.3,START@40+3"' '"70"'
+```

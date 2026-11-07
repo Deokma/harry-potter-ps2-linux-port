@@ -9,12 +9,18 @@
 //
 // Render target alpha is stored as a / 128, clamped, so GL's SRC_ALPHA and DST_ALPHA factors mean what
 // the GS's As and Ad mean. The cost is that alpha above 0x80 is lost once written.
+//
+// Two threads: everything from the frontend records and makes no GL call, so the game thread never waits on the
+// driver or the display. What used to touch GL while recording (texture and CLUT uploads, program compiles, render
+// targets) is an op in the command stream, with GL names taken from a pool made ahead of time. The thread that owns
+// the context calls LatchFrame, with the frontend's state lock held, to take the frame, then Present to run it.
 #pragma once
 
 #include "runtime/gs/gs_backend.h"
 #include "runtime/gs/gs_cpu_backend.h"
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -42,6 +48,7 @@ public:
     void Flush() override;
     void TextureFlush() override;
     void Sync(GSSyncReason reason) override;
+    void LatchFrame(const GSPresentationRequest &request) override;
     PresentationFrame Present(const GSPresentationRequest &request) override;
     bool ClearFramebuffer(const GSContext &context, uint32_t rgba) override;
     uint32_t ConsumeLocalToHostBytes(uint8_t *dst, uint32_t maxBytes) override;
@@ -110,11 +117,16 @@ private:
             Draw,
             RtUpload,
             RtCopy,
+            GlOp,
         };
         Type type = Type::Draw;
         unsigned mode = 0;
         uint32_t first = 0, count = 0;
         RenderTarget *rt = nullptr;
+        // the target as it is at this point in the stream: it may grow later, before this runs
+        unsigned rtTex = 0, copyTex = 0;
+        int rtW = 0, rtH = 0;
+        uint32_t opIndex = 0;
         DepthBuffer *depth = nullptr;
         Program *program = nullptr;
         Program *inverseProgram = nullptr; // second pass for alpha-test AFAIL modes
@@ -148,7 +160,13 @@ private:
     RenderTarget *findRenderTarget(uint32_t fbp, uint32_t fbw);
     RenderTarget *getRenderTarget(uint32_t fbp, uint32_t fbw, uint8_t psm, int needHeight);
     DepthBuffer *getDepthBuffer(uint32_t zbp, int width, int height);
-    unsigned getFramebuffer(RenderTarget *rt, DepthBuffer *depth);
+    unsigned getFramebuffer(unsigned tex, DepthBuffer *depth, int w, int h);
+    void pushOp(std::function<void()> op);
+    void refillNames();
+    static unsigned takeName(std::vector<unsigned> &pool, const char *what);
+    void setTarget(Command &cmd, RenderTarget *rt);
+    void planPresent(const GSPresentationRequest &request);
+    void composePlan(PresentationFrame &result, bool capture);
     void loadRtFromVram(RenderTarget &rt, int x, int y, int w, int h, std::vector<uint8_t> &out);
     Program *getProgram(uint32_t key);
     TextureEntry *resolveTexture(const GSDrawState &state);
@@ -161,8 +179,7 @@ private:
     void bumpPages(uint32_t dbp, uint32_t dbw, uint8_t psm, uint32_t y, uint32_t h);
     void finishTransferIfDone();
     void executeCommands();
-    void compose(const GSPresentationRequest &request, PresentationFrame &result);
-    void drawPresentQuad(RenderTarget *rt, uint32_t dbx, uint32_t dby, uint32_t w, uint32_t h, int viewW, int viewH, bool flip);
+    void drawPresentQuad(unsigned tex, int texW, int texH, uint32_t dbx, uint32_t dby, uint32_t w, uint32_t h, bool flip);
 
     GSCpuBackend m_mem;
     uint8_t *m_vram = nullptr;
@@ -190,6 +207,24 @@ private:
     std::vector<HostVertex> m_vertices;
     std::vector<Command> m_commands;
     std::vector<std::vector<uint8_t>> m_uploadPixels;
+    std::vector<std::function<void()>> m_glOps;
+    // The frame taken by LatchFrame: only the context's thread touches these.
+    std::vector<HostVertex> m_execVertices;
+    std::vector<Command> m_execCommands;
+    std::vector<std::vector<uint8_t>> m_execUploads;
+    std::vector<std::function<void()>> m_execOps;
+    std::vector<unsigned> m_texNames, m_samplerNames, m_rbNames;
+    unsigned m_presentSampler = 0;
+    struct PresentPlan
+    {
+        bool any = false, has1 = false, has2 = false, mmod = false, slbg = false;
+        unsigned tex1 = 0, tex2 = 0;
+        int w1 = 0, h1 = 0, w2 = 0, h2 = 0;
+        uint32_t dbx1 = 0, dby1 = 0, cw1 = 0, ch1 = 0, dbx2 = 0, dby2 = 0, cw2 = 0, ch2 = 0;
+        uint32_t outW = 0, outH = 0, alp = 0, displayFbp = 0;
+        uint64_t bg = 0;
+    };
+    PresentPlan m_plan;
     GSDrawState m_lastState{};
     bool m_needResolve = true;
     GSTransferCommand m_transfer{};

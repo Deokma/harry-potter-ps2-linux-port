@@ -449,7 +449,8 @@ void GSGlesBackend::Initialize(uint8_t *vram, uint32_t vramSize)
 void GSGlesBackend::Reset()
 {
     m_mem.Reset();
-    m_commands.clear();
+    // Draws go, but GL objects that later frames will name still have to be made.
+    m_commands.erase(std::remove_if(m_commands.begin(), m_commands.end(), [](const Command &c) { return c.type != Command::Type::GlOp; }), m_commands.end());
     m_vertices.clear();
     m_uploadPixels.clear();
     m_needResolve = true;
@@ -480,8 +481,65 @@ void GSGlesBackend::ensureGlObjects()
     m_presentProgram.id = linkProgram(kPresentVertex, kPresentFragment);
     m_presentProgram.uTex = glGetUniformLocation(m_presentProgram.id, "u_tex");
     glGenFramebuffers(2, m_copyFbo);
+    glGenSamplers(1, &m_presentSampler);
+    glSamplerParameteri(m_presentSampler, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glSamplerParameteri(m_presentSampler, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glSamplerParameteri(m_presentSampler, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glSamplerParameteri(m_presentSampler, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    refillNames();
+}
+
+// GL names need the context but no storage, so a pool made on the context's thread lets recording hand them out.
+// A frame that made thousands of new textures would run out, and those would draw as texture 0.
+void GSGlesBackend::refillNames()
+{
+    constexpr size_t kTextures = 4096u, kOthers = 64u;
+    auto fill = [](std::vector<unsigned> &pool, size_t want, void (*gen)(int, unsigned *))
+    {
+        if (pool.size() >= want / 2u)
+            return;
+        const size_t have = pool.size();
+        pool.resize(want);
+        gen(static_cast<int>(want - have), pool.data() + have);
+    };
+    fill(m_texNames, kTextures, [](int n, unsigned *out) { glGenTextures(n, out); });
+    fill(m_samplerNames, kOthers, [](int n, unsigned *out) { glGenSamplers(n, out); });
+    fill(m_rbNames, kOthers, [](int n, unsigned *out) { glGenRenderbuffers(n, out); });
+}
+
+unsigned GSGlesBackend::takeName(std::vector<unsigned> &pool, const char *what)
+{
+    if (pool.empty())
+    {
+        static bool told = false;
+        if (!told)
+            std::fprintf(stderr, "[gles] out of pooled %s names in one frame\n", what);
+        told = true;
+        return 0u;
+    }
+    const unsigned name = pool.back();
+    pool.pop_back();
+    return name;
+}
+
+void GSGlesBackend::pushOp(std::function<void()> op)
+{
+    Command cmd;
+    cmd.type = Command::Type::GlOp;
+    cmd.opIndex = static_cast<uint32_t>(m_glOps.size());
+    m_glOps.push_back(std::move(op));
+    m_commands.push_back(cmd);
+}
+
+void GSGlesBackend::setTarget(Command &cmd, RenderTarget *rt)
+{
+    cmd.rt = rt;
+    cmd.rtTex = rt->tex;
+    cmd.copyTex = rt->copyTex;
+    cmd.rtW = rt->width;
+    cmd.rtH = rt->height;
 }
 
 void GSGlesBackend::destroyGlObjects()
@@ -563,28 +621,31 @@ GSGlesBackend::Program *GSGlesBackend::getProgram(uint32_t key)
     define("RT24", (key & kRt24) ? 1 : 0);
     fs += kFragmentBody;
 
-    auto program = std::make_unique<Program>();
-    program->id = linkProgram(kVertexShader, fs);
-    program->uScale = glGetUniformLocation(program->id, "u_scale");
-    program->uTex = glGetUniformLocation(program->id, "u_tex");
-    program->uClut = glGetUniformLocation(program->id, "u_clut");
-    program->uTexSize = glGetUniformLocation(program->id, "u_texSize");
-    program->uUvScale = glGetUniformLocation(program->id, "u_uvScale");
-    program->uFog = glGetUniformLocation(program->id, "u_fog");
-    program->uAref = glGetUniformLocation(program->id, "u_aref");
-    program->uFix = glGetUniformLocation(program->id, "u_fix");
-    program->uRtAlpha = glGetUniformLocation(program->id, "u_rtAlpha");
-    program->uTa = glGetUniformLocation(program->id, "u_ta");
-    program->uRegion = glGetUniformLocation(program->id, "u_region");
-    program->uRegionMode = glGetUniformLocation(program->id, "u_regionMode");
-    glUseProgram(program->id);
-    if (program->uTex >= 0)
-        glUniform1i(program->uTex, 0);
-    if (program->uClut >= 0)
-        glUniform1i(program->uClut, 1);
-    Program *raw = program.get();
-    m_programs[key] = std::move(program);
-    return raw;
+    auto owned = std::make_unique<Program>();
+    Program *program = owned.get();
+    m_programs[key] = std::move(owned);
+    pushOp([program, fs = std::move(fs)]()
+           {
+               program->id = linkProgram(kVertexShader, fs);
+               program->uScale = glGetUniformLocation(program->id, "u_scale");
+               program->uTex = glGetUniformLocation(program->id, "u_tex");
+               program->uClut = glGetUniformLocation(program->id, "u_clut");
+               program->uTexSize = glGetUniformLocation(program->id, "u_texSize");
+               program->uUvScale = glGetUniformLocation(program->id, "u_uvScale");
+               program->uFog = glGetUniformLocation(program->id, "u_fog");
+               program->uAref = glGetUniformLocation(program->id, "u_aref");
+               program->uFix = glGetUniformLocation(program->id, "u_fix");
+               program->uRtAlpha = glGetUniformLocation(program->id, "u_rtAlpha");
+               program->uTa = glGetUniformLocation(program->id, "u_ta");
+               program->uRegion = glGetUniformLocation(program->id, "u_region");
+               program->uRegionMode = glGetUniformLocation(program->id, "u_regionMode");
+               glUseProgram(program->id);
+               if (program->uTex >= 0)
+                   glUniform1i(program->uTex, 0);
+               if (program->uClut >= 0)
+                   glUniform1i(program->uClut, 1);
+           });
+    return program;
 }
 
 GSGlesBackend::RenderTarget *GSGlesBackend::findRenderTarget(uint32_t fbp, uint32_t fbw)
@@ -631,34 +692,37 @@ GSGlesBackend::RenderTarget *GSGlesBackend::getRenderTarget(uint32_t fbp, uint32
     const int height = needHeight <= 512 ? 512 : 1024;
     if (rt)
     {
-        // A draw past the bottom: the render target grows, keeping what is there.
-        executeCommands();
-        unsigned tex = 0;
-        glGenTextures(1, &tex);
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, tex);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-        glBindFramebuffer(GL_READ_FRAMEBUFFER, m_copyFbo[0]);
-        glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, rt->tex, 0);
-        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_copyFbo[1]);
-        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
-        glDisable(GL_SCISSOR_TEST);
-        glBlitFramebuffer(0, 0, rt->width, rt->height, 0, 0, rt->width, rt->height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-        for (auto it = m_fbos.begin(); it != m_fbos.end();)
-        {
-            if (static_cast<unsigned>(it->first >> 32) == rt->tex)
-            {
-                glDeleteFramebuffers(1, &it->second);
-                it = m_fbos.erase(it);
-            }
-            else
-                ++it;
-        }
-        glDeleteTextures(1, &rt->tex);
+        // A draw past the bottom: the render target grows, keeping what is there, at this point in the stream.
+        const unsigned tex = takeName(m_texNames, "texture");
+        const unsigned old = rt->tex;
+        const int oldW = rt->width, oldH = rt->height;
+        pushOp([this, tex, old, oldW, oldH, width, height]()
+               {
+                   glActiveTexture(GL_TEXTURE0);
+                   glBindTexture(GL_TEXTURE_2D, tex);
+                   glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                   glBindFramebuffer(GL_READ_FRAMEBUFFER, m_copyFbo[0]);
+                   glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, old, 0);
+                   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_copyFbo[1]);
+                   glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+                   glDisable(GL_SCISSOR_TEST);
+                   glBlitFramebuffer(0, 0, oldW, oldH, 0, 0, oldW, oldH, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+                   for (auto it = m_fbos.begin(); it != m_fbos.end();)
+                   {
+                       if (static_cast<unsigned>(it->first >> 32) == old)
+                       {
+                           glDeleteFramebuffers(1, &it->second);
+                           it = m_fbos.erase(it);
+                       }
+                       else
+                           ++it;
+                   }
+                   glDeleteTextures(1, &old);
+               });
         rt->tex = tex;
         rt->height = height;
         return rt;
@@ -670,17 +734,20 @@ GSGlesBackend::RenderTarget *GSGlesBackend::getRenderTarget(uint32_t fbp, uint32
     created->psm = psm;
     created->width = width;
     created->height = height;
-    glGenTextures(1, &created->tex);
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, created->tex);
+    created->tex = takeName(m_texNames, "texture");
     // What the dump (or anything before the first draw) left in local memory is the starting picture.
     std::vector<uint8_t> pixels;
     loadRtFromVram(*created, 0, 0, width, height, pixels);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    pushOp([tex = created->tex, width, height, pixels = std::move(pixels)]()
+           {
+               glActiveTexture(GL_TEXTURE0);
+               glBindTexture(GL_TEXTURE_2D, tex);
+               glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+               glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+               glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+               glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+               glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+           });
     m_rts.push_back(std::move(created));
     return m_rts.back().get();
 }
@@ -694,29 +761,32 @@ GSGlesBackend::DepthBuffer *GSGlesBackend::getDepthBuffer(uint32_t zbp, int widt
     auto depth = std::make_unique<DepthBuffer>();
     depth->width = width;
     depth->height = height;
-    glGenRenderbuffers(1, &depth->rb);
-    glBindRenderbuffer(GL_RENDERBUFFER, depth->rb);
-    glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+    depth->rb = takeName(m_rbNames, "renderbuffer");
+    pushOp([rb = depth->rb, width, height]()
+           {
+               glBindRenderbuffer(GL_RENDERBUFFER, rb);
+               glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH24_STENCIL8, width, height);
+           });
     DepthBuffer *raw = depth.get();
     m_depths[key] = std::move(depth);
     return raw;
 }
 
-unsigned GSGlesBackend::getFramebuffer(RenderTarget *rt, DepthBuffer *depth)
+unsigned GSGlesBackend::getFramebuffer(unsigned tex, DepthBuffer *depth, int w, int h)
 {
-    const uint64_t key = (static_cast<uint64_t>(rt->tex) << 32) | (depth ? depth->rb : 0u);
+    const uint64_t key = (static_cast<uint64_t>(tex) << 32) | (depth ? depth->rb : 0u);
     auto it = m_fbos.find(key);
     if (it != m_fbos.end())
         return it->second;
     unsigned fbo = 0;
     glGenFramebuffers(1, &fbo);
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, rt->tex, 0);
+    glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
     if (depth)
         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, depth->rb);
     const unsigned status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
     if (status != GL_FRAMEBUFFER_COMPLETE)
-        std::fprintf(stderr, "[gles] framebuffer incomplete: 0x%x (%dx%d)\n", status, rt->width, rt->height);
+        std::fprintf(stderr, "[gles] framebuffer incomplete: 0x%x (%dx%d)\n", status, w, h);
     m_fbos[key] = fbo;
     return fbo;
 }
@@ -900,10 +970,13 @@ GSGlesBackend::TextureEntry *GSGlesBackend::resolveTexture(const GSDrawState &st
     m_stats.decodeMs += t1 - tRaw;
 
     TextureEntry &entry = m_contentTextures[contentKey];
-    glActiveTexture(GL_TEXTURE0);
-    glGenTextures(1, &entry.tex);
-    glBindTexture(GL_TEXTURE_2D, entry.tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, indexed ? GL_R8 : GL_RGBA8, w, h, 0, indexed ? GL_RED : GL_RGBA, GL_UNSIGNED_BYTE, m_decode.data());
+    entry.tex = takeName(m_texNames, "texture");
+    pushOp([tex = entry.tex, w, h, indexed, pixels = std::vector<uint8_t>(m_decode.begin(), m_decode.begin() + bytes)]()
+           {
+               glActiveTexture(GL_TEXTURE0);
+               glBindTexture(GL_TEXTURE_2D, tex);
+               glTexImage2D(GL_TEXTURE_2D, 0, indexed ? GL_R8 : GL_RGBA8, w, h, 0, indexed ? GL_RED : GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+           });
     entry.w = static_cast<int>(w);
     entry.h = static_cast<int>(h);
     entry.indexed = indexed;
@@ -927,7 +1000,7 @@ void GSGlesBackend::evictTextures()
     {
         if (m_frameIndex - it->second.lastUsed > 120u)
         {
-            glDeleteTextures(1, &it->second.tex);
+            pushOp([tex = it->second.tex]() { glDeleteTextures(1, &tex); });
             m_textureBytes -= it->second.bytes;
             it = m_contentTextures.erase(it);
         }
@@ -943,12 +1016,14 @@ unsigned GSGlesBackend::getSampler(unsigned filter, unsigned wrapS, unsigned wra
     auto it = m_samplers.find(key);
     if (it != m_samplers.end())
         return it->second;
-    unsigned sampler = 0;
-    glGenSamplers(1, &sampler);
-    glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, static_cast<int>(filter));
-    glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, static_cast<int>(filter));
-    glSamplerParameteri(sampler, GL_TEXTURE_WRAP_S, static_cast<int>(wrapS));
-    glSamplerParameteri(sampler, GL_TEXTURE_WRAP_T, static_cast<int>(wrapT));
+    const unsigned sampler = takeName(m_samplerNames, "sampler");
+    pushOp([sampler, filter, wrapS, wrapT]()
+           {
+               glSamplerParameteri(sampler, GL_TEXTURE_MIN_FILTER, static_cast<int>(filter));
+               glSamplerParameteri(sampler, GL_TEXTURE_MAG_FILTER, static_cast<int>(filter));
+               glSamplerParameteri(sampler, GL_TEXTURE_WRAP_S, static_cast<int>(wrapS));
+               glSamplerParameteri(sampler, GL_TEXTURE_WRAP_T, static_cast<int>(wrapT));
+           });
     m_samplers[key] = sampler;
     return sampler;
 }
@@ -969,7 +1044,7 @@ unsigned GSGlesBackend::resolveClut(const GSTex0Reg &tex0, const GSTexaReg &texa
     if (it != m_cluts.end())
         return it->second;
 
-    uint32_t palette[256] = {};
+    std::vector<uint32_t> palette(256u, 0u);
     const uint32_t entries = fourBit ? 16u : 256u;
     for (uint32_t i = 0; i < entries; ++i)
     {
@@ -983,14 +1058,16 @@ unsigned GSGlesBackend::resolveClut(const GSTex0Reg &tex0, const GSTexaReg &texa
             raw = static_cast<uint32_t>(m_clutRam[index]) | (static_cast<uint32_t>(m_clutRam[index + 256u]) << 16);
         palette[i] = texelToRgba(tex0.cpsm, raw, texa);
     }
-    unsigned tex = 0;
-    glGenTextures(1, &tex);
-    glActiveTexture(GL_TEXTURE1);
-    glBindTexture(GL_TEXTURE_2D, tex);
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 256, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, palette);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glActiveTexture(GL_TEXTURE0);
+    const unsigned tex = takeName(m_texNames, "texture");
+    pushOp([tex, palette = std::move(palette)]()
+           {
+               glActiveTexture(GL_TEXTURE1);
+               glBindTexture(GL_TEXTURE_2D, tex);
+               glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 256, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, palette.data());
+               glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+               glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+               glActiveTexture(GL_TEXTURE0);
+           });
     m_cluts[key] = tex;
     ++m_stats.clutUploads;
     return tex;
@@ -1030,7 +1107,7 @@ void GSGlesBackend::beginRun(const GSDrawState &state)
         cmd.mode = GL_TRIANGLES;
 
     const int needHeight = static_cast<int>(ctx.scissor.y1) + 1;
-    cmd.rt = getRenderTarget(ctx.frame.fbp, ctx.frame.fbw, ctx.frame.psm, needHeight);
+    setTarget(cmd, getRenderTarget(ctx.frame.fbp, ctx.frame.fbw, ctx.frame.psm, needHeight));
     cmd.rt->drawn = true;
 
     // Depth
@@ -1121,18 +1198,21 @@ void GSGlesBackend::beginRun(const GSDrawState &state)
                 ++m_stats.rtFeedback;
                 if (!source->copyTex)
                 {
-                    glGenTextures(1, &source->copyTex);
-                    glActiveTexture(GL_TEXTURE0);
-                    glBindTexture(GL_TEXTURE_2D, source->copyTex);
-                    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, source->width, source->height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-                    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                    source->copyTex = takeName(m_texNames, "texture");
+                    pushOp([tex = source->copyTex, w = source->width, h = source->height]()
+                           {
+                               glActiveTexture(GL_TEXTURE0);
+                               glBindTexture(GL_TEXTURE_2D, tex);
+                               glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+                               glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+                               glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+                               glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                               glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                           });
                 }
                 Command copy;
                 copy.type = Command::Type::RtCopy;
-                copy.rt = source;
+                setTarget(copy, source);
                 m_commands.push_back(copy);
                 cmd.tex = source->copyTex;
             }
@@ -1737,7 +1817,7 @@ void GSGlesBackend::finishTransferIfDone()
         return;
     Command cmd;
     cmd.type = Command::Type::RtUpload;
-    cmd.rt = rt;
+    setTarget(cmd, rt);
     cmd.rectX = x;
     cmd.rectY = y;
     cmd.rectW = w;
@@ -1764,16 +1844,16 @@ void GSGlesBackend::Sync(GSSyncReason reason)
 
 void GSGlesBackend::executeCommands()
 {
-    if (m_commands.empty())
+    if (m_execCommands.empty())
     {
-        m_vertices.clear();
+        m_execVertices.clear();
         return;
     }
     const double t0 = nowMs();
     glBindVertexArray(m_vao);
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
-    glBufferData(GL_ARRAY_BUFFER, static_cast<long>(m_vertices.size() * sizeof(HostVertex)), m_vertices.data(), GL_STREAM_DRAW);
-    m_stats.vertices += m_vertices.size();
+    glBufferData(GL_ARRAY_BUFFER, static_cast<long>(m_execVertices.size() * sizeof(HostVertex)), m_execVertices.data(), GL_STREAM_DRAW);
+    m_stats.vertices += m_execVertices.size();
 
     unsigned currentFbo = 0xFFFFFFFFu;
     Program *currentProgram = nullptr;
@@ -1797,11 +1877,11 @@ void GSGlesBackend::executeCommands()
             currentProgram = program;
             ++m_stats.programSwitches;
         }
-        if (program->scaleW != cmd.rt->width || program->scaleH != cmd.rt->height)
+        if (program->scaleW != cmd.rtW || program->scaleH != cmd.rtH)
         {
-            glUniform4f(program->uScale, 2.0f / cmd.rt->width, 2.0f / cmd.rt->height, -1.0f, -1.0f);
-            program->scaleW = cmd.rt->width;
-            program->scaleH = cmd.rt->height;
+            glUniform4f(program->uScale, 2.0f / cmd.rtW, 2.0f / cmd.rtH, -1.0f, -1.0f);
+            program->scaleW = cmd.rtW;
+            program->scaleH = cmd.rtH;
         }
         if (program->uTexSize >= 0 && (program->texSize[0] != cmd.texSize[0] || program->texSize[1] != cmd.texSize[1]))
         {
@@ -1857,30 +1937,47 @@ void GSGlesBackend::executeCommands()
         }
     };
 
-    for (const Command &cmd : m_commands)
+    for (const Command &cmd : m_execCommands)
     {
+        if (cmd.type == Command::Type::GlOp)
+        {
+            if (curMask != 0xF)
+            {
+                glColorMask(1, 1, 1, 1);
+                curMask = 0xF;
+            }
+            m_execOps[cmd.opIndex]();
+            // Whatever it bound, nothing tracked holds any more.
+            glActiveTexture(GL_TEXTURE0);
+            glEnable(GL_SCISSOR_TEST);
+            currentFbo = 0xFFFFFFFFu;
+            currentProgram = nullptr;
+            currentTex = currentClut = 0xFFFFFFFFu;
+            curScissor[0] = curScissor[1] = curScissor[2] = curScissor[3] = -1;
+            continue;
+        }
         if (cmd.type == Command::Type::RtUpload)
         {
             glActiveTexture(GL_TEXTURE0);
-            glBindTexture(GL_TEXTURE_2D, cmd.rt->tex);
-            currentTex = cmd.rt->tex;
+            glBindTexture(GL_TEXTURE_2D, cmd.rtTex);
+            currentTex = cmd.rtTex;
             glTexSubImage2D(GL_TEXTURE_2D, 0, cmd.rectX, cmd.rectY, cmd.rectW, cmd.rectH, GL_RGBA, GL_UNSIGNED_BYTE,
-                            m_uploadPixels[cmd.uploadIndex].data());
+                            m_execUploads[cmd.uploadIndex].data());
             continue;
         }
         if (cmd.type == Command::Type::RtCopy)
         {
             glDisable(GL_SCISSOR_TEST);
             glBindFramebuffer(GL_READ_FRAMEBUFFER, m_copyFbo[0]);
-            glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, cmd.rt->tex, 0);
+            glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, cmd.rtTex, 0);
             glBindFramebuffer(GL_DRAW_FRAMEBUFFER, m_copyFbo[1]);
-            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, cmd.rt->copyTex, 0);
+            glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, cmd.copyTex, 0);
             if (curMask != 0xF)
             {
                 glColorMask(1, 1, 1, 1);
                 curMask = 0xF;
             }
-            glBlitFramebuffer(0, 0, cmd.rt->width, cmd.rt->height, 0, 0, cmd.rt->width, cmd.rt->height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+            glBlitFramebuffer(0, 0, cmd.rtW, cmd.rtH, 0, 0, cmd.rtW, cmd.rtH, GL_COLOR_BUFFER_BIT, GL_NEAREST);
             glEnable(GL_SCISSOR_TEST);
             currentFbo = 0xFFFFFFFFu;
             continue;
@@ -1888,11 +1985,11 @@ void GSGlesBackend::executeCommands()
         if (cmd.count == 0u)
             continue;
 
-        const unsigned fbo = getFramebuffer(cmd.rt, cmd.depth);
+        const unsigned fbo = getFramebuffer(cmd.rtTex, cmd.depth, cmd.rtW, cmd.rtH);
         if (fbo != currentFbo)
         {
             glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-            glViewport(0, 0, cmd.rt->width, cmd.rt->height);
+            glViewport(0, 0, cmd.rtW, cmd.rtH);
             currentFbo = fbo;
             ++m_stats.rtSwitches;
         }
@@ -1993,19 +2090,17 @@ void GSGlesBackend::executeCommands()
     glDepthMask(GL_TRUE);
     glBindSampler(0, 0);
 
-    m_commands.clear();
-    m_vertices.clear();
-    m_uploadPixels.clear();
-    m_needResolve = true;
+    m_execCommands.clear();
+    m_execVertices.clear();
+    m_execUploads.clear();
+    m_execOps.clear();
     m_stats.executeMs += nowMs() - t0;
 }
 
-void GSGlesBackend::drawPresentQuad(RenderTarget *rt, uint32_t dbx, uint32_t dby, uint32_t w, uint32_t h, int viewW, int viewH, bool flip)
+void GSGlesBackend::drawPresentQuad(unsigned tex, int texW, int texH, uint32_t dbx, uint32_t dby, uint32_t w, uint32_t h, bool flip)
 {
-    (void)viewW;
-    (void)viewH;
-    const float u0 = static_cast<float>(dbx) / rt->width, u1 = static_cast<float>(dbx + w) / rt->width;
-    const float v0 = static_cast<float>(dby) / rt->height, v1 = static_cast<float>(dby + h) / rt->height;
+    const float u0 = static_cast<float>(dbx) / texW, u1 = static_cast<float>(dbx + w) / texW;
+    const float v0 = static_cast<float>(dby) / texH, v1 = static_cast<float>(dby + h) / texH;
     const float top = flip ? 1.0f : -1.0f, bottom = flip ? -1.0f : 1.0f;
     HostVertex q[6];
     std::memset(q, 0, sizeof(q));
@@ -2027,14 +2122,33 @@ void GSGlesBackend::drawPresentQuad(RenderTarget *rt, uint32_t dbx, uint32_t dby
     glBindBuffer(GL_ARRAY_BUFFER, m_vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(q), q, GL_STREAM_DRAW);
     glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, rt->tex);
-    glBindSampler(0, getSampler(GL_LINEAR, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE));
+    glBindTexture(GL_TEXTURE_2D, tex);
+    glBindSampler(0, m_presentSampler);
     glDrawArrays(GL_TRIANGLES, 0, 6);
     glBindSampler(0, 0);
 }
 
-void GSGlesBackend::compose(const GSPresentationRequest &request, PresentationFrame &result)
+// With the frontend's state lock held: what the frame shows, and the frame itself, out of the game thread's hands.
+void GSGlesBackend::LatchFrame(const GSPresentationRequest &request)
 {
+    refillNames();
+    planPresent(request);
+    evictTextures();
+    m_execVertices.swap(m_vertices);
+    m_execCommands.swap(m_commands);
+    m_execUploads.swap(m_uploadPixels);
+    m_execOps.swap(m_glOps);
+    m_vertices.clear();
+    m_commands.clear();
+    m_uploadPixels.clear();
+    m_glOps.clear();
+    m_needResolve = true;
+    ++m_frameIndex;
+}
+
+void GSGlesBackend::planPresent(const GSPresentationRequest &request)
+{
+    m_plan = PresentPlan{};
     const uint64_t pmode = request.pmode;
     const bool en1 = pmode & 1u, en2 = pmode & 2u;
     const bool mmod = (pmode >> 5) & 1u, slbg = (pmode >> 7) & 1u;
@@ -2066,15 +2180,47 @@ void GSGlesBackend::compose(const GSPresentationRequest &request, PresentationFr
     const Circuit c2 = decode(request.dispfb2, request.display2, en2);
     if (!c1.on && !c2.on)
         return;
-    const uint32_t outW = std::max(c1.on ? c1.w : 0u, c2.on ? c2.w : 0u);
-    const uint32_t outH = std::max(c1.on ? c1.h : 0u, c2.on ? c2.h : 0u);
+    PresentPlan &p = m_plan;
+    p.any = true;
+    p.outW = std::max(c1.on ? c1.w : 0u, c2.on ? c2.w : 0u);
+    p.outH = std::max(c1.on ? c1.h : 0u, c2.on ? c2.h : 0u);
+    p.mmod = mmod;
+    p.slbg = slbg;
+    p.alp = alp;
+    p.bg = request.bgcolor;
+    p.displayFbp = c1.on ? c1.fbp : c2.fbp;
+    if (c1.on)
+    {
+        RenderTarget *rt = getRenderTarget(c1.fbp, c1.fbw, c1.psm, 1);
+        p.has1 = true;
+        p.tex1 = rt->tex;
+        p.w1 = rt->width;
+        p.h1 = rt->height;
+        p.dbx1 = c1.dbx;
+        p.dby1 = c1.dby;
+        p.cw1 = c1.w;
+        p.ch1 = c1.h;
+    }
+    if (c2.on)
+    {
+        RenderTarget *rt = getRenderTarget(c2.fbp, c2.fbw, c2.psm, 1);
+        p.has2 = true;
+        p.tex2 = rt->tex;
+        p.w2 = rt->width;
+        p.h2 = rt->height;
+        p.dbx2 = c2.dbx;
+        p.dby2 = c2.dby;
+        p.cw2 = c2.w;
+        p.ch2 = c2.h;
+    }
+}
 
-    RenderTarget *rt1 = c1.on ? getRenderTarget(c1.fbp, c1.fbw, c1.psm, 1) : nullptr;
-    RenderTarget *rt2 = c2.on ? getRenderTarget(c2.fbp, c2.fbw, c2.psm, 1) : nullptr;
-    executeCommands();
-
+void GSGlesBackend::composePlan(PresentationFrame &result, bool capture)
+{
+    const PresentPlan &p = m_plan;
+    const uint32_t outW = p.outW, outH = p.outH;
     int viewW = 0, viewH = 0;
-    if (m_capture)
+    if (capture)
     {
         if (m_captureW != static_cast<int>(outW) || m_captureH != static_cast<int>(outH))
         {
@@ -2100,8 +2246,6 @@ void GSGlesBackend::compose(const GSPresentationRequest &request, PresentationFr
     else
     {
         glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        int vp[4] = {0, 0, 0, 0};
-        glGetIntegerv(GL_VIEWPORT, vp);
         viewW = gsplayScreenWidth();
         viewH = gsplayScreenHeight();
     }
@@ -2110,34 +2254,34 @@ void GSGlesBackend::compose(const GSPresentationRequest &request, PresentationFr
     glDisable(GL_DEPTH_TEST);
     glDisable(GL_BLEND);
     glUseProgram(m_presentProgram.id);
-    const uint64_t bg = request.bgcolor;
+    const uint64_t bg = p.bg;
     glClearColor((bg & 0xFF) / 255.0f, ((bg >> 8) & 0xFF) / 255.0f, ((bg >> 16) & 0xFF) / 255.0f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
 
-    const bool flip = !m_capture;
-    if (rt1 && rt2)
+    const bool flip = !capture;
+    if (p.has1 && p.has2)
     {
         // The two circuits merge: read circuit 2 first, then circuit 1 over it.
-        if (!slbg)
-            drawPresentQuad(rt2, c2.dbx, c2.dby, c2.w, c2.h, viewW, viewH, flip);
+        if (!p.slbg)
+            drawPresentQuad(p.tex2, p.w2, p.h2, p.dbx2, p.dby2, p.cw2, p.ch2, flip);
         glEnable(GL_BLEND);
         glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
-        if (mmod)
+        if (p.mmod)
         {
-            glBlendColor(0.0f, 0.0f, 0.0f, alp / 255.0f);
+            glBlendColor(0.0f, 0.0f, 0.0f, p.alp / 255.0f);
             glBlendFuncSeparate(GL_CONSTANT_ALPHA, GL_ONE_MINUS_CONSTANT_ALPHA, GL_ONE, GL_ZERO);
         }
         else
             glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ZERO);
-        drawPresentQuad(rt1, c1.dbx, c1.dby, c1.w, c1.h, viewW, viewH, flip);
+        drawPresentQuad(p.tex1, p.w1, p.h1, p.dbx1, p.dby1, p.cw1, p.ch1, flip);
         glDisable(GL_BLEND);
     }
-    else if (rt1)
-        drawPresentQuad(rt1, c1.dbx, c1.dby, c1.w, c1.h, viewW, viewH, flip);
+    else if (p.has1)
+        drawPresentQuad(p.tex1, p.w1, p.h1, p.dbx1, p.dby1, p.cw1, p.ch1, flip);
     else
-        drawPresentQuad(rt2, c2.dbx, c2.dby, c2.w, c2.h, viewW, viewH, flip);
+        drawPresentQuad(p.tex2, p.w2, p.h2, p.dbx2, p.dby2, p.cw2, p.ch2, flip);
 
-    if (m_capture)
+    if (capture)
     {
         result.width = outW;
         result.height = outH;
@@ -2147,7 +2291,7 @@ void GSGlesBackend::compose(const GSPresentationRequest &request, PresentationFr
         glPixelStorei(GL_PACK_ROW_LENGTH, kFrontendStride);
         glReadPixels(0, 0, outW, outH, GL_RGBA, GL_UNSIGNED_BYTE, result.pixels.data());
         glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-        result.displayFbp = c1.on ? c1.fbp : c2.fbp;
+        result.displayFbp = p.displayFbp;
         result.sourceFbp = result.displayFbp;
     }
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -2155,13 +2299,18 @@ void GSGlesBackend::compose(const GSPresentationRequest &request, PresentationFr
 
 PresentationFrame GSGlesBackend::Present(const GSPresentationRequest &request)
 {
+    (void)request; // LatchFrame planned it
     PresentationFrame result{};
     const double t0 = nowMs();
-    compose(request, result);
-    evictTextures();
+    executeCommands();
+    if (m_plan.any)
+    {
+        if (m_capture)
+            composePlan(result, true);
+        composePlan(result, false);
+    }
     m_stats.presentMs += nowMs() - t0;
     ++m_stats.frames;
-    ++m_frameIndex;
     return result;
 }
 
