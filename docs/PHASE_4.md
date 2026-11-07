@@ -761,3 +761,42 @@ Git Bash, the run above:
 ```
 DEVICE_TIMEOUT=320 sh scripts/device_detach.sh -g private/third_party/build-m2/aarch64/runner-aarch64 runner/device_panel.sh -- sh device_panel.sh 262 '"CROSS@5+0.3,START@40+3,CROSS@58+1"' '"150 200 258"' PS2PORT_FRAME_EVERY=3000 PS2PORT_SAMPLE=samples.bin PS2PORT_SAMPLE_FROM=215 PS2PORT_SAMPLE_TO=255
 ```
+
+# IOP on its own thread (2026-11-07)
+
+The user's request after the thread split: "IOP on own thread". **Done: the IOP runs on `IopThread`. In play on the device: 63.9-64.1 ms a frame (15.6 a second), was 67.7 ms.** Loading and the cutscenes go through on the device and on the PC (4 of 4 PC runs). Stop rule (a): still about twice the 33.3 ms budget.
+
+## How it works
+
+- **One IOP lock** (`ps2x::iop::Ps2portIopGuard`). The IOP thread holds it for each batch of 4,096 IOP cycles. Every `IopSubsystem` entry point takes it, and so do the EE-side reply callbacks that go back into the IOP.
+- **Time.** As the EE accounts cycles it raises the IOP's target, an eighth of its own, in steps of 16,384 IOP cycles (444 us). The IOP thread runs toward the target. Before any EE call into the IOP, the IOP first catches up to the target, as it did when it ran inline. The EE waits for it only then, or if it falls two frames behind.
+- **What the IOP asks of the EE thread** (calls to the EE's RPC servers, SIF commands, which need guest allocations and guest invocations) goes into a queue. The EE runs the queue at its next checkpoint, or while it is waiting on the IOP. The IOP thread waits until its call has run.
+- On by default; `PS2PORT_IOP_THREAD=0` runs the IOP inline as before.
+
+## What it took
+
+Every threaded PC run but one stalled on the loading screen with the bar at half, at varying points. Three wrong leads first: starved locking, which the catch-up now prevents anyway; a lost wake-up; and the CD reads. Then a reply trace (`[ee-rpc] reply`, with `PS2PORT_IOP_TRACE`) showed the real difference. After the EE asked for the next stream block, the stream library answered "failed" (`0 n ffffffff ...`) where the good run answered `1 80c 8000 ...`, and it never issued the next CD read. The cause was time: when the IOP called the EE, the EE-side half of the call used to happen with no IOP time passing. Queued, it left the IOP running on, and the stream library sometimes saw the EE as late and went into its error state. With the IOP thread waiting for its call to run, every run got through.
+
+`[iop-rpc]` lines (with `PS2PORT_IOP_TRACE`) show each IOP call to the EE and its reply.
+
+## Numbers
+
+Device, the same shop with Harry in play, 215-262 s.
+
+| | GS thread only (`panel-142010`) | GS and IOP threads (`panel-160123`, `panel-161110`) |
+|---|---|---|
+| Game frame | 67.5-67.9 ms | **63.9-64.3 ms** |
+| Game thread | 100 % | 99-100 % |
+| GS thread | 67 % | 72 % |
+| IOP thread | - | 10-11 % |
+| Main thread (GL) | 14-15 % | 15-16 % |
+| Peak temperature | 72.5 C | **77.0-77.9 C** |
+
+The IOP was 14.3 % of the game thread; it is 3 % now (the cycle hand-off), and the frame got 5 % shorter, not 14 %. The first version told the IOP thread of new time every 4,096 cycles at a cost of 4 % of the frame (`pthread_cond_broadcast`, `runEeCycles`). Larger steps and waking the thread only when it waits removed that cost from the profile, but the frame stayed at 64 ms. **The game thread is limited by the game's code and the runtime around it,** not by what moved away: eegen guest code 24.4 %, libc 15.2 % (copies), PS2Memory 14.6 % (`Ps2IsSpecialAddress` 5.7 %, fast reads and writes, the register map), PS2Recomp guest code 14.3 %, EE scheduler and runtime 12.3 % (`advanceEeTimers` 3.5 %, `checkpointDue`, `accountCycles`).
+
+Temperature is the other thing to watch: three busy cores reached 77.9 C in 260 s, against the 85 C stop.
+
+## What's left
+
+- **The game thread (64 ms).** Making it faster means the code itself: float groups in eegen (off in the runner), memory access for special addresses without the slow check, fewer scheduler checks and timer updates per checkpoint, and the copies of DMA chains (part of libc's 15 %). None of these is measured yet. The Phase 3 replays (main frames of 24-40 ms with float groups, outside this runtime) suggest that much of today's game-thread time is the runtime around the guest code, but that is an inference: those were different frames.
+- The GS thread is at 72 %, about 46 ms a frame, with VU1 20 ms of it. It isn't the limit yet, and won't be for long if the game thread gets faster.
