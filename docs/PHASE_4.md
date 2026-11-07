@@ -839,3 +839,21 @@ Estimates. For the pipeline to reach 33 ms, both sides need roughly halving:
 - **GS thread:** VU1's translated code (33 %) and the GS frontend's per-register parsing (`writeRegisterPacked`, `vertexKick`), which M4 already measured as a large share; fewer VIF1 hand-offs (40 a frame).
 
 Tools: `sample_threads.py --callers PATTERN` (from the link register, which the profiler now records) and `--by-ee`; `[m5t]` reports the GS thread's time in jobs and waiting; `[m5g]` the bytes of DMA chains gathered.
+
+# DMA chain copies (2026-11-07)
+
+The user's request: "Stop DMA copies". **Not stopped: VIF1 needs each chain as one contiguous stream, so the copy stays, but it got cheaper. Gameplay frames 61.1-61.4 -> 60.1-60.3 ms (16.6 a second). The GS thread is now the limit.**
+
+- **Why no zero-copy.** PS2Recomp's VIF1 interpreter takes one buffer and stops at a VIF code cut off by its end (`if (pos + 16 > sizeBytes) break;`); only DIRECT image data carries over between calls. With the game's chains (TTE: each tag's upper 8 bytes carry the VIF codes whose data follows in the referenced block), pieces fed one at a time would break at every tag. Reading chains straight from RDRAM therefore needs VIF1 rewritten to stream. Moving the copy to the GS thread would only move 7 ms a frame onto the busier thread.
+- **What changed.** The tag walk only notes each piece (pointer and size); the pieces are then copied together into a buffer sized once, prefetching the start of the pieces six ahead. The copies went from 18.3 % to 14.7 % of the game thread. They are still about 7 ms a frame for 3 MB, which is cache misses over thousands of small scattered pieces, not bandwidth. A deeper prefetch (a cursor 2 KB ahead, line by line) brought the copy itself to 11.4 % but cost more in the walk (3.7 -> 8.9 %) and was taken out.
+
+| | Before (`panel-181906`) | After (`panel-225927`) |
+|---|---|---|
+| Game frame | 61.1-61.4 ms | **60.1-60.3 ms** |
+| Game thread | 83 % | 83 % |
+| GS thread | 82 % (89 % in jobs) | 82 % (89-90 % in jobs, 7 % of it waiting for the EE) |
+| Copies on the game thread | 18.3 % | 14.7 % |
+
+The PC boot still reaches the cutscene with the same picture. Peak 66-68 C in these runs (a cooler room: 52-54 C at the start).
+
+**The GS thread is the limit now:** about 54 ms of work a frame (translated VU1 a third of it, GS parsing and recording more than 40 %, VIF1 12 %) plus about 4.5 ms waiting on the EE for VIF1 handlers. EE-side savings no longer shorten the frame until the GS thread's work does.
