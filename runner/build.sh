@@ -67,6 +67,7 @@ if ! ls "$out"/fun/list_*.cpp >/dev/null 2>&1; then
         rm "$l"
     done
 fi
+python3 -I "$src/stale.py" "$out/fun"
 for u in "$out"/fun/list_*.cpp; do job "-O1" "$u" "${u%.cpp}.o"; done
 # eegen's
 if ! ls "$out"/eg/list_*.cpp >/dev/null 2>&1; then
@@ -76,6 +77,7 @@ if ! ls "$out"/eg/list_*.cpp >/dev/null 2>&1; then
         rm "$l"
     done
 fi
+python3 -I "$src/stale.py" "$out/eg"
 for u in "$out"/eg/list_*.cpp; do job "-O2" "$u" "${u%.cpp}.o"; done
 job "-O1" "$gen/eg/eg_table.cpp" "$out/eg/eg_table.o"
 

@@ -21,8 +21,12 @@ awk -F, 'NR > 1 { print $2 }' "$t/function_map.csv" > "$out/functions.txt"
 skip=0x2dd8e0,0x2dc868,0x2dcc98,0x2de1e8,0x2dc738
 floats="--no-float-groups"
 [ "${1:-}" = groups ] && floats=""
-python3 -I eegen/eegen.py "$elf" "$t/function_map.csv" "$out/eg" --functions "$out/functions.txt" \
+rm -rf "$out/eg.new"
+python3 -I eegen/eegen.py "$elf" "$t/function_map.csv" "$out/eg.new" --functions "$out/functions.txt" \
     --ps2recomp-table "$t/out-b/register_functions.cpp" --native "$out/native.txt" --skip "$skip" $floats --runtime-count --checkpoints | tail -3 | cut -c1-240
+# keeps unchanged files' times, so that the build recompiles only the batches that changed
+rsync -rc --delete "$out/eg.new/" "$out/eg/"
+rm -rf "$out/eg.new"
 
 python3 -I eegen/vu0gen.py "$t/rec/frame-ntsc02.vu0code" "$out/vu0_programs.inc" \
     --entries 0x1,0x4,0x7,0xa,0xd,0x10,0x13,0x16,0x19,0x1c,0x1f,0x22,0x25,0x28,0x2b,0x2e,0x31,0x34 | tail -1
