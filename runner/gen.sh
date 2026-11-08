@@ -17,8 +17,10 @@ awk -F, 'NR > 1 { print $2 }' "$t/function_map.csv" > "$out/functions.txt"
     grep -l 'ps2_stubs::\|ps2_syscalls::' "$t"/out-b/FUN_*.cpp | sed -E 's/.*FUN_([0-9a-f]{8})_.*/0x\1/'
 } | awk '{ print $1 }' | sort -u > "$out/native.txt"
 
-# the movie stub replaces these in PS2Recomp's output (scripts/ps2recomp_movie_stub.py)
-skip=0x2dd8e0,0x2dc868,0x2dcc98,0x2de1e8,0x2dc738
+# Movies play since Phase 8 (FFmpeg in the libmpeg stand-in). PS2PORT_MOVIE_STUB=1: the old stub, which replaces these in
+# PS2Recomp's output (scripts/ps2recomp_movie_stub.py, run on trial/out-b and the runtime's runner folder too)
+skip=""
+[ "${PS2PORT_MOVIE_STUB:-0}" = 1 ] && skip=0x2dd8e0,0x2dc868,0x2dcc98,0x2de1e8,0x2dc738
 floats="--no-float-groups"
 [ "${1:-}" = groups ] && floats=""
 rm -rf "$out/eg.new"

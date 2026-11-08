@@ -25,7 +25,21 @@ case $target in
 esac
 # every C++ throw passes through display.cpp's logger (PS2PORT_THROW_LOG=1)
 link="$link -Wl,--wrap=__cxa_throw"
-common="-std=c++20 -ffp-contract=off -fno-math-errno -w $arch -DPS2X_HAS_FFMPEG=0 -DPS2X_ENABLE_IOP_RPC_TRACE=1 -I$src/host -I$rt/include -I$rt/src/lib -I$rt/src/lib/Kernel -I$iop/include -I$iop/src -I$src/../eegen -I$src/../vu1 -I$gen"
+# Movies (Phase 8): PS2Recomp's libmpeg stand-in (Kernel/Stubs/MPEG.cpp) decodes with a minimal static FFmpeg 7.1 when it is built
+# (scripts/ffmpeg_build.sh x86|aarch64); without it, movies are blank frames.
+ff=$tp/ffmpeg-7.1-$target
+if [ -f "$ff/lib/libavcodec.a" ]; then
+    ffmpeg="-DPS2X_HAS_FFMPEG=1 -I$ff/include"
+    link="$link $ff/lib/libavcodec.a $ff/lib/libswscale.a $ff/lib/libavutil.a -lm"
+else
+    ffmpeg="-DPS2X_HAS_FFMPEG=0"
+fi
+# MPEG.cpp is the only user: rebuilt when the choice changes
+if [ "$(cat "$out/ffmpeg.txt" 2>/dev/null)" != "$ffmpeg" ]; then
+    rm -f "$out/lib/kernel_Stubs_MPEG.o"
+    echo "$ffmpeg" > "$out/ffmpeg.txt"
+fi
+common="-std=c++20 -ffp-contract=off -fno-math-errno -w $arch $ffmpeg-DPS2X_ENABLE_IOP_RPC_TRACE=1 -I$src/host -I$rt/include -I$rt/src/lib -I$rt/src/lib/Kernel -I$iop/include -I$iop/src -I$src/../eegen -I$src/../vu1 -I$gen"
 
 rm -f "$out/jobs.txt"
 # job FLAGS SOURCE OBJECT: compile if the object is missing or older
