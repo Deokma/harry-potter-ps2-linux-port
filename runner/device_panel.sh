@@ -24,10 +24,21 @@ start=$(date +%s)
 # After the temperature: the runner's RssAnon and RssFile and the resident size of its Mali mappings (/dev/mali*), in kB.
 ( while :; do p=$(pidof runner-aarch64 | cut -d' ' -f1); m="0 0 0"; [ -n "$p" ] && m="$(awk '/^RssAnon|^RssFile/ {printf "%s ", $2}' /proc/$p/status) $(awk '/^[0-9a-f]+-/ {k = ($6 ~ /mali/)} k && /^Rss:/ {s += $2} END {print s + 0}' /proc/$p/smaps)"; echo "$(($(date +%s) - start)) $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq) $(cat /sys/class/thermal/cooling_device0/cur_state) $(cat /sys/class/thermal/thermal_zone0/temp) $m $(grep '^cpu[0-9]' /proc/stat | tr '\n' '|')"; sleep 2; done ) > "$d/freq.txt" 2>/dev/null &
 fpid=$!
+# Memory: every 30 s the runner's eight largest mappings by resident size (maps.txt); above RSS_LIMIT_KB of anonymous memory
+# (default 420000; the device has 973 MB and the kernel's OOM killer took the runner at 480 MB) the runner is stopped first.
+( n=0; while :; do sleep 2; n=$((n + 2)); p=$(pidof runner-aarch64 | cut -d' ' -f1); [ -z "$p" ] && continue
+  a=$(awk '/^RssAnon/ {print $2}' /proc/$p/status)
+  if [ $((n % 30)) = 0 ] || [ "${a:-0}" -gt "${RSS_LIMIT_KB:-420000}" ]; then
+    echo "t=$n anon=$a"; awk '/^[0-9a-f]+-[0-9a-f]+ / {r = $1; f = $6} /^Rss:/ && $2 > 2048 {print $2, r, f}' /proc/$p/smaps | sort -rn | head -8
+  fi
+  if [ "${a:-0}" -gt "${RSS_LIMIT_KB:-420000}" ]; then echo "RSS LIMIT: anon $a kB, stopping"; kill -TERM "$p"; sleep 3; kill -KILL "$p" 2>/dev/null; fi
+done ) > "$d/maps.txt" 2>/dev/null &
+mpid=$!
 env PS2PORT_FRAME_LOG="$d/frames.txt" PS2PORT_DISPLAY=1 PS2PORT_M5_STATS=1 PS2PORT_NATIVE_STATS=1 PS2PORT_HEADLESS=1 PS2PORT_RUN_SECONDS="$secs" PS2PORT_PAD="$pad" PS2PORT_FRAME_DIR="$d/frames" "$@" \
     ./runner-aarch64 /userdata/ps2bench/game/SLUS_208.26 > "$d/log.txt" 2>&1
 rc=$?
-kill "$fpid" 2>/dev/null
+kill "$fpid" "$mpid" 2>/dev/null
+grep -a 'RSS LIMIT' "$d/maps.txt"
 wait
 awk '{ n++; f += $2; c += $3; if ($2 < lo || lo == 0) lo = $2 } END { if (n) printf "clock: avg %.0f kHz, min %d, avg cooling state %.1f (freq.txt)\n", f / n, lo, c / n }' "$d/freq.txt"
 echo "exit $rc after $(($(date +%s) - start)) s, $(ls "$d/frames" | wc -l) screenshots: $d"

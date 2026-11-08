@@ -29,6 +29,7 @@
 #include <exception>
 #include <map>
 #include <typeinfo>
+#include <malloc.h>
 #include <string>
 #include <thread>
 #include <vector>
@@ -79,10 +80,14 @@ namespace
     const int64_t g_processStartNs = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 }
 
+void ps2portDrawThrottle(); // ps2_memory.cpp (private runtime)
+
 void ps2portPollFailed(uint32_t returnAddress)
 {
     if (returnAddress != 0x2cd6c8u)
         return;
+    // the game waits for its vsync here: where it waits for the display too when the display is too far behind
+    ps2portDrawThrottle();
     const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     if (g_lastMarkNs != 0)
     {
@@ -303,6 +308,10 @@ namespace
 // runner/pad_sdl.cpp: the controller, on SDL, from this (the main) thread
 void ps2portPadInit();
 void ps2portPadPoll();
+// ps2_memory.cpp (private runtime): the EE waits for a latch when stage B's recorded backlog is too large
+bool ps2portDrawWantsLatch();
+void ps2portDrawLatched();
+void ps2portDrawThrottle();
 
 bool ps2portDisplayInit(PS2Runtime &runtime)
 {
@@ -335,12 +344,13 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
     // Each call is one vsync's frame; a swap may already have taken a vsync or more.
     const double waitStart = nowMs();
     uint64_t tick = runtime.eeScheduler().currentVSyncTick();
-    while (tick == last && nowMs() - waitStart < 50.0)
+    // ... or at once when stage B waits for a latch (its backlog is full; the EE may be waiting on it, so no vsync would come)
+    while (tick == last && nowMs() - waitStart < 50.0 && !ps2portDrawWantsLatch())
     {
         std::this_thread::sleep_for(std::chrono::microseconds(500));
         tick = runtime.eeScheduler().currentVSyncTick();
     }
-    if (tick == last)
+    if (tick == last && !ps2portDrawWantsLatch())
         return;
     const uint64_t passed = last == ~0ull ? 1u : tick - last;
     last = tick;
@@ -351,6 +361,7 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
         g_gles->setCaptureNextPresent(true);
     const double t0 = nowMs();
     runtime.gs().latchHostPresentationFrame();
+    ps2portDrawLatched();
     const double t1 = nowMs();
     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     sampling(seconds);
@@ -457,6 +468,13 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
         }
         std::fprintf(stderr, "[m5m] t=%.0f tick/s %.1f drawn/s %.1f; palettes %.0f, targets %.1f MB, depth %.0f (%.1f MB), textures %.0f (%.1f MB)\n", seconds, (tick - tickBefore) * 1000.0 / span, frames * 1000.0 / span,
                      gpu[12], gpu[13] / 1048576.0, gpu[14], gpu[15] / 1048576.0, gpu[16], gpu[17] / 1048576.0);
+        {
+            // malloc's own count (main arena and the large blocks it maps): whether a growth is the heap's
+            const struct mallinfo mi = mallinfo();
+            std::fprintf(stderr, "[m5h] t=%.0f heap in use %.1f MB (main arena %.1f MB, mapped blocks %.1f MB in %d); stage B waited for a latch %llu times\n", seconds,
+                         (static_cast<unsigned>(mi.uordblks) + static_cast<unsigned>(mi.hblkhd)) / 1048576.0, static_cast<unsigned>(mi.arena) / 1048576.0,
+                         static_cast<unsigned>(mi.hblkhd) / 1048576.0, mi.hblks, static_cast<unsigned long long>(ps2portGsThreadCounts(8)));
+        }
         tickBefore = tick;
         std::fprintf(stderr, "[m5w] t=%.0f per s: VU0 %.0f gave up %.0f other %.0f; VU1 %.0f other %.0f; runs %.0f vertices %.0f passes %.0f rt switches %.0f tex uploads %.1f (%.2f MB) rt uploads %.1f feedback %.1f cluts %.1f; execute %.1f ms; %.0f targets, %.0f programs\n", seconds,
                      (counts[0] - before[0]) * 1000.0 / span, (counts[1] - before[1]) * 1000.0 / span, (counts[2] - before[2]) * 1000.0 / span, (counts[3] - before[3]) * 1000.0 / span, (counts[4] - before[4]) * 1000.0 / span,
