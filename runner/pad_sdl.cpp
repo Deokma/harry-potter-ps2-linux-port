@@ -2,7 +2,7 @@
 // SDL is used on the main thread only: ps2portPadInit (from ps2portDisplayInit) and ps2portPadPoll (every displayed vsync).
 // The EE thread, which reads the pad in scePadRead, sees one snapshot in atomics.
 //   PS2PORT_PAD_DB=FILE      SDL mappings to load first (else PortMaster's Knulli database, only when SDL knows no mapping)
-//   PS2PORT_PAD_SWAP_FACE=1  swap A with B and X with Y (for a mapping that follows the labels, not the positions)
+//   PS2PORT_PAD_SWAP_FACE=1|0  swap A with B and X with Y, or not (default: swapped for ANBERNIC-keys, whose mapping follows the labels)
 //   PS2PORT_PAD_LOG=1        print every change of the buttons and sticks
 // Quit: Menu (guide) + Start, or L1 + R1 + Select + Start, held for a second. SIGTERM / SIGINT (SDL turns them into SDL_QUIT) too.
 #include "raylib.h"
@@ -29,6 +29,7 @@ namespace
 
     bool g_ready = false;
     bool g_dbLoaded = false;
+    bool g_swapFace = false;
     bsdl_gamecontroller *g_pad = nullptr;
     unsigned g_polls = 0;
     unsigned g_reported = 0; // joystick indices already reported as unmapped (bit mask)
@@ -74,6 +75,12 @@ namespace
                         continue;
                     const char *name = sdl.GameControllerName ? sdl.GameControllerName(g_pad) : nullptr;
                     std::fprintf(stderr, "[pad] controller %d: %s\n", i, name ? name : "?");
+                    // PortMaster's ANBERNIC-keys mapping follows the labels: the button marked A, on the right, reads as SDL's
+                    // a (the user's session, 2026-11-08). Swapped by default so that the bottom button is Cross, as on a DualShock.
+                    const char *env = std::getenv("PS2PORT_PAD_SWAP_FACE");
+                    g_swapFace = env ? std::atoi(env) != 0 : (name && std::strstr(name, "ANBERNIC"));
+                    std::fprintf(stderr, "[pad] face buttons %s\n", g_swapFace ? "by position: bottom Cross, right Circle, left Square, top Triangle"
+                                                                                : "as SDL names them: a Cross, b Circle, x Square, y Triangle");
                     if (sdl.GameControllerMapping)
                     {
                         if (char *m = sdl.GameControllerMapping(g_pad))
@@ -154,7 +161,7 @@ void ps2portPadPoll()
             return;
     }
 
-    static const bool swap = std::getenv("PS2PORT_PAD_SWAP_FACE") != nullptr;
+    const bool swap = g_swapFace;
     static const bool log = std::getenv("PS2PORT_PAD_LOG") != nullptr;
     struct Map
     {

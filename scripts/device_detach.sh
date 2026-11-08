@@ -21,6 +21,12 @@ files=""
 while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do files="$files $1"; shift; done
 shift
 # shellcheck disable=SC2086
+# One run at a time: two runners do not fit in the device's memory, and the runs share detached.sh and detached.rc.
+# shellcheck disable=SC2086
+if ssh $ssh_opts "$host" "pidof runner-aarch64 >/dev/null || pgrep -f 'sh detache[d].sh' >/dev/null"; then
+    echo "BUSY: a run is already going on the device (playing or testing); not starting another"
+    exit 75
+fi
 ssh $ssh_opts "$host" "mkdir -p '$dir'"
 # shellcheck disable=SC2086
 ssh $ssh_opts "$host" "cat > '$dir/device_guard.sh'" < "$here/device_guard.sh"
