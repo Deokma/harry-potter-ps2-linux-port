@@ -305,9 +305,11 @@ namespace
     }
 }
 
-// runner/pad_sdl.cpp: the controller, on SDL, from this (the main) thread
+// runner/pad_sdl.cpp: the controller, on SDL, from this (the main) thread; runner/audio_sdl.cpp: the sound
 void ps2portPadInit();
 void ps2portPadPoll();
+void ps2portAudioInit();
+void ps2portAudioStats(double &mixerRate, uint64_t &underruns);
 // ps2_memory.cpp (private runtime): the EE waits for a latch when stage B's recorded backlog is too large
 bool ps2portDrawWantsLatch();
 void ps2portDrawLatched();
@@ -323,6 +325,7 @@ bool ps2portDisplayInit(PS2Runtime &runtime)
         return false;
     }
     ps2portPadInit();
+    ps2portAudioInit();
     auto backend = std::make_unique<GSGlesBackend>();
     g_gles = backend.get();
     runtime.gs().setRasterBackend(std::move(backend));
@@ -471,9 +474,14 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
         {
             // malloc's own count (main arena and the large blocks it maps): whether a growth is the heap's
             const struct mallinfo mi = mallinfo();
-            std::fprintf(stderr, "[m5h] t=%.0f heap in use %.1f MB (main arena %.1f MB, mapped blocks %.1f MB in %d); stage B waited for a latch %llu times\n", seconds,
+            double mixerRate = 0.0;
+            uint64_t underruns = 0;
+            ps2portAudioStats(mixerRate, underruns);
+            std::fprintf(stderr, "[m5h] t=%.0f heap in use %.1f MB (main arena %.1f MB, mapped blocks %.1f MB in %d); stage B waited for a latch %llu times; "
+                                 "sound mixed at %.0f frames/s, output ran dry %llu times\n", seconds,
                          (static_cast<unsigned>(mi.uordblks) + static_cast<unsigned>(mi.hblkhd)) / 1048576.0, static_cast<unsigned>(mi.arena) / 1048576.0,
-                         static_cast<unsigned>(mi.hblkhd) / 1048576.0, mi.hblks, static_cast<unsigned long long>(ps2portGsThreadCounts(8)));
+                         static_cast<unsigned>(mi.hblkhd) / 1048576.0, mi.hblks, static_cast<unsigned long long>(ps2portGsThreadCounts(8)),
+                         mixerRate, static_cast<unsigned long long>(underruns));
         }
         tickBefore = tick;
         std::fprintf(stderr, "[m5w] t=%.0f per s: VU0 %.0f gave up %.0f other %.0f; VU1 %.0f other %.0f; runs %.0f vertices %.0f passes %.0f rt switches %.0f tex uploads %.1f (%.2f MB) rt uploads %.1f feedback %.1f cluts %.1f; execute %.1f ms; %.0f targets, %.0f programs\n", seconds,
