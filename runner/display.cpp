@@ -82,7 +82,7 @@ namespace
 
 void ps2portDrawThrottle(); // ps2_memory.cpp (private runtime)
 
-void ps2portPollFailed(uint32_t returnAddress)
+void ps2portPollFailed(uint32_t returnAddress, const uint8_t *rdram)
 {
     if (returnAddress != 0x2cd6c8u)
         return;
@@ -98,10 +98,19 @@ void ps2portPollFailed(uint32_t returnAddress)
         {
         }
     }
-    // PS2PORT_FRAME_LOG=FILE: every game frame, milliseconds since the first and the frame's length (scripts/frame_stats.py)
+    // PS2PORT_FRAME_LOG=FILE: every game frame, milliseconds since the first and the frame's length (scripts/frame_stats.py),
+    // then the game's vblank count (0x328490, its game time: 60 a second on a PS2) and the vblanks its last frame took (0x3287F0)
     static FILE *frameLog = std::getenv("PS2PORT_FRAME_LOG") ? std::fopen(std::getenv("PS2PORT_FRAME_LOG"), "w") : nullptr;
     if (frameLog && g_lastMarkNs != 0)
-        std::fprintf(frameLog, "%.1f %.2f\n", (now - g_processStartNs) / 1e6, (now - g_lastMarkNs) / 1e6);
+    {
+        uint32_t vblanks = 0, last = 0;
+        if (rdram)
+        {
+            std::memcpy(&vblanks, rdram + 0x328490u, 4);
+            std::memcpy(&last, rdram + 0x3287F0u, 4);
+        }
+        std::fprintf(frameLog, "%.1f %.2f %u %u\n", (now - g_processStartNs) / 1e6, (now - g_lastMarkNs) / 1e6, vblanks, last);
+    }
     g_lastMarkNs = now;
     g_frameMarks.fetch_add(1, std::memory_order_relaxed);
 }

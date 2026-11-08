@@ -34,11 +34,14 @@ heat) and then playing through it to find and fix what breaks in later chapters.
    Then: gaps while loading, Gaussian interpolation, reverb, noise and pitch modulation if the game uses them.
    `PS2PORT_SPU_DEBUG=1` prints a `[spu-mix]` line per core every 5 s; `PS2PORT_SPU_PCM=FILE` records the mix. Code:
    `ps2xIOP/src/emulator/core/iop_memory.cpp` (private IOP patch), `runner/audio_sdl.cpp`. Plan: `docs/PLAN_AUDIO.md`.
-2. **Game speed to 100 %.** The game counts vblanks that follow its own CPU cycles; at 23 fps it sees 30. Try vblanks on real
-   time (the game reads elapsed vblanks, so it may step further per frame). This also brings sound to the right pitch.
+2. **Game speed to 100 %.** Tried (`PS2PORT_REALTIME=1`, off by default): game time follows real time, but the first loading
+   screen then never ends. Find what the loader waits for, or give the game real elapsed time only where it steps its world.
+   `docs/PHASE_8.md`, "Game speed". (Test with `PS2PORT_SLOWDOWN=70` on the PC; the PC's software renderer is far slower than
+   the device in 3D scenes, so the PC is not for timing.)
 3. **Saves.** Find where the game offers to save (not the Start button in Ollivanders), save, then Continue from the menu.
    `PS2PORT_MC_LOG=1` (already on in `play.sh`) logs every memory card command.
-4. **Movies.** Decode the `.PSS` movies (MPEG-2 video through the IPU, ADPCM/PCM audio) or at least the main menu's background.
+4. **Movies.** The runtime's libmpeg stand-in decodes with FFmpeg; needs a minimal FFmpeg 7.1 built (`scripts/ffmpeg_build.sh`,
+   waiting for the user's OK to build the downloaded source), `PS2X_HAS_FFMPEG=1`, and the movie skip list in `runner/gen.sh` emptied.
 5. **Play through the game.** Each chapter: does it load, look right, sound right, not crash. The user's play sessions are the
    main way (the logs record what happens); saves let a session start where the last one stopped.
 6. **Speed and heat.** 43.5 ms to 33 ms a frame: the GS thread's stage A is the limit (VU1's code about 22 ms of it); less

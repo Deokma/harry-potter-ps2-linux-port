@@ -54,3 +54,41 @@ right on the device, and the parts the runtime only stubs.
   between 60 and 70 s.
 - **Not done:** listening (the user, next session); Gaussian interpolation; reverb; noise and pitch modulation; ADMA streams;
   the cost on the IOP thread not measured yet (estimate in `PLAN_AUDIO.md`: a few % of a core).
+
+## Testing on the PC (user, 2026-11-08: "first test on PC, later on the device")
+
+- The PC runner (x86 in WSL) has no SDL2 there, so it uses the runtime's software renderer: `sh scripts/ps2recomp_trial.sh boot SECONDS PAD`
+  with `PS2PORT_RUNNER=private/third_party/build-m2/x86/runner` (screenshots: PPM files named `.png` in `trial/boot-*/frames`).
+- **Measured: the PC's software path is much slower than the device in 3D scenes**: frames about 70 ms in menus and loading,
+  about 900 ms in the Hagrid street and the shop (the device: 45 ms). So the PC suits logic, loading, saves, sound data and
+  movies, not timing or frame rates.
+- Fixed on the way: the display throttle of Phase 7 (`ps2portDrawThrottle`) waited out its 1 s time-out every frame when no
+  display takes the recorded frames (the PC's software path): it now acts only once a display has latched one.
+- `PS2PORT_FRAME_LOG` now also logs the game's per-frame vblank count (0x328490, restarts each frame) and the vblanks the frame
+  took (0x3287F0); `scripts/frame_stats.py` reports the game's speed from the latter (game time against real time).
+
+## 3. Game speed (2026-11-08): first attempt, not good enough yet
+
+- **Why 73 %:** an EE event (vblank, timer, alarm) fires once both its EE cycle and its host time have come
+  (`EeScheduler::processDueDeadlines`). On the PC the host time comes last: real-time speed. On the device the cycles come last:
+  the game's whole clock (vblanks, timers, the IOP's clock, sound) runs at the device's pace.
+- **Tried: the EE's cycle count kept within 2 ms of the host's clock** (`PS2PORT_REALTIME=1`, `EeScheduler::accountCycles`; `=2`
+  leaves the IOP's clock alone), with `PS2PORT_SLOWDOWN=70` making the PC's EE thread run at about 70 % of a PS2, as on the device.
+  Measured on the PC (path to the shop, 260 s): game speed 100 % everywhere with it (4.4 vblanks a frame), 44-49 % without it in
+  menus and boot (B), 57-59 % for the normal PC run (A; 4-17 % in 3D scenes, the software renderer).
+- **But the first loading screen never ends with it** (both `=1` and `=2`): the loading bar barely moves in 4 minutes, where the
+  normal run loads in seconds. The game's loader, not the IOP, is what breaks; not found yet (a time-out or retry measured in
+  vblanks or timer ticks, or a loader thread that no longer gets the time the frame used to wait). Left off by default.
+- **Next:** find what the loader waits for (its threads, semaphores and timer use during the first load, with and without the
+  jump); or keep the clock and give the game real elapsed time only where it steps its world (the frame end, 0x2e2268, stores
+  the elapsed vblanks that two functions read), which leaves loading, cutscenes and sound at the device's pace.
+
+## 5. Movies
+
+The game plays its `.PSS` movies (EA and WB logos, the main menu's background `FRONTEND.PSS`, and others: 157 MB) through
+Sony's libmpeg (`sceMpegInit`, `sceMpegCreate`, `sceMpegDemuxPssRing` ...), which PS2Recomp stands in for natively
+(`Kernel/Stubs/MPEG.cpp`) and decodes with FFmpeg when built with `PS2X_HAS_FFMPEG=1` (MPEG-2 video decoder and parser,
+swscale to RGBA). Today the port stubs the movie functions (`runner/gen.sh` skip list, `scripts/ps2recomp_movie_stub.py`).
+Plan: a minimal static FFmpeg 7.1 (`scripts/ffmpeg_build.sh`; the source downloaded from ffmpeg.org, its signature checked
+against FFmpeg's release key), `PS2X_HAS_FFMPEG=1`, the skip list emptied, tested on the PC first. **Waiting for the user's OK
+to build FFmpeg from that source** (the tool's permission check stopped it: code from an external download).
