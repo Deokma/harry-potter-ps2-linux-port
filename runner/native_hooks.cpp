@@ -14,6 +14,7 @@
 
 #include "eegen_rt.h"
 
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -173,20 +174,45 @@ bool ps2portVu0Native(PS2Memory &memory, R5900Context *ctx, uint32_t startPC)
 bool ps2portVu1Native(PS2Memory &memory, VU1State &interpreter, uint32_t startPC, uint32_t top, uint32_t itop)
 {
     static const bool off = std::getenv("PS2PORT_NO_VU1") != nullptr;
-    if (off)
-        return false;
     static uint64_t generation = ~0ull;
     static bool same = false;
-    if (memory.getVU1CodeGeneration() != generation)
+    if (!off && memory.getVU1CodeGeneration() != generation)
     {
         generation = memory.getVU1CodeGeneration();
         same = sameCode("VU1", memory.getVU1Code(), g_vu1Image, g_vu1Reached, sizeof(g_vu1Image));
     }
+    // PS2PORT_VU1_LOG=1: once a second, "[vu1e]" lines with each start address (in pairs) and its calls and XGKICKs then
+    static const bool log = std::getenv("PS2PORT_VU1_LOG") != nullptr;
+    static uint32_t calls[0x800], kicks[0x800];
+    static uint32_t current = 0;
+    if (log)
+    {
+        static auto last = std::chrono::steady_clock::now();
+        static const auto t0 = last;
+        current = (startPC / 8u) & 0x7FFu;
+        ++calls[current];
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last >= std::chrono::seconds(1))
+        {
+            last = now;
+            std::fprintf(stderr, "[vu1e] t=%.0f", std::chrono::duration<double>(now - t0).count());
+            for (uint32_t e = 0; e < 0x800u; ++e)
+                if (calls[e])
+                    std::fprintf(stderr, " %x:%u/%u", e, calls[e], kicks[e]);
+            std::fputc('\n', stderr);
+            std::memset(calls, 0, sizeof(calls));
+            std::memset(kicks, 0, sizeof(kicks));
+        }
+    }
+    if (off)
+        return false;
     if (same && !g_memory)
     {
         g_memory = &memory;
         egVu1SetKickSink([](const uint8_t *data, uint32_t size)
-                         { g_memory->submitGifPacket(GifPathId::Path1, data, size); });
+                         {
+                             ++kicks[current];
+                             g_memory->submitGifPacket(GifPathId::Path1, data, size); });
     }
     if (same)
     {

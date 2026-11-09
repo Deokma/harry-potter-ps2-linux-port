@@ -42,6 +42,17 @@ Phase reports live in `docs/PHASE_N.md`.
   (end of stream from the game's own stream state, drop the `0x171904` write); (5) thermal runs at 1.2/1.0 GHz with the
   fixed guard; (6) sticky pad presses for low-fps menus.
 
+**Session 2026-11-09 afternoon (textures and pause):** see `docs/PHASE_8.md`, "Pause menu" and "Ollivanders picture".
+- **Pause works:** the shop opens in an invisible hint box (mode 5, `0x38c194`); Cross, Select (Remembrall), Cross, then Start opens
+  the pause menu and Down + Cross the save screen (mode 6). Hold scripted presses >= 1.2 s (680 ms frames in the Remembrall).
+- **The wrong shop picture is not a GLES bug:** our own GS dump replayed on gsplay's software GS looks the same. No 2D reaches the
+  GS in hint mode; vertex colours partly saturated. Needs the user's PCSX2 capture (O01) to compare streams.
+- Tools: `PS2PORT_WATCH` (runner), `PS2PORT_GSDUMP` (private runtime), `PS2PORT_VU1_LOG` (runner, uncommitted build in
+  `build-m2/aarch64/vu1log/`). Test binary with WATCH+GSDUMP: `build-m2/aarch64/watch/runner-aarch64`; the user's play binary
+  `build-m2/aarch64/runner-aarch64` (md5 5a9eec8d) is unchanged.
+- **Next:** (1) PCSX2 O01 capture -> compare; (2) VU1 log run in hint mode; (3) write a save on the save screen, then Continue
+  (makes shop tests fast, also on the PC); (4) sticky pad presses in `runner/pad_sdl.cpp`.
+
 **Goal now (user, 2026-11-06):** a thin slice to the title screen on the RG40XX H with
 real GLES picture, audio and input stubbed, no gameplay. No more scene measuring. Plan and
 milestones M1–M5: `docs/PHASE_4.md` (approved; results and revised estimates at its end).

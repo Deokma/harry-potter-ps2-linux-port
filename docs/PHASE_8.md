@@ -174,3 +174,43 @@ Device binary: the device's own `runner-aarch64` of 2026-11-08 14:45 (md5 `17acd
   83.3-86.7 C** to 1,120 s, frames 44.4-46 ms p50, cores 66-75 % busy. Cooling states stayed 1-2, which cap the clock at
   1.6/1.5 GHz (states count down from 1,704 MHz), so the kernel never lowered our 1.416 GHz: below the 115 C critical trip
   the guard is the only protection. Runs at 1.2 and 1.0 GHz still to do (device was in use).
+
+### Pause menu: the shop opens in the hint box (2026-11-09, measured on the device and read from the code)
+
+- **Tool:** `PS2PORT_WATCH=ITEM,...` (runner, `display.cpp`) prints `[watch]` lines at a game frame's end whenever a watched guest
+  word changes: `0xADDR`, `*0xADDR[+0xOFF]` (through a pointer), or `btn` (bit i = button action i was pressed this frame).
+- **How the game reads the pad** (`0x2b9cf8` -> `0x2ccc50`): the pad word goes into a table of 0x18-byte actions at
+  `*(*0x38c130 + 0x10)`; +0x00 is the value, +0x10 a one-frame press edge. Actions: 0/1 left stick, 2/3 right stick, **4 Start**,
+  5 Select, 6-9 L1/L2/R1/R2 pressure, 10 Up, 11 Down, 12 Left, 13 Right, 14 Triangle, 15 Circle, **16 Cross**, 17 Square, 18 L3,
+  19 R3. The control set is `*0x3a4ff0` (2 in this game's default); `0x262758` assigns each game action an index: in set 2
+  pause `*0x3956b0` = 4 (Start), dismiss `*0x395700` = 16 (Cross; 15 Circle if `0x262290()` == 1).
+- **Measured (`panel-143607`, path to the shop, Start at 262 s):** the Start edge reaches the table (action 4 at 264.0 s), so the
+  mapping is right. But from 221.7 s on, in the shop, **the mode word `0x38c194` is 5**, not 2 (play).
+- **Mode 5 is the hint box** (`0x259c18(id)` opens hint `id` once, `0x250eb8` runs it): the world is frozen until, after 5 frames,
+  the dismiss action (Cross) is pressed (`0x259670`: state `0x394e70` 1 -> 2 -> 3), then `0x250cf0` returns to mode 2. Pause
+  (`0x250998`, mode 3) is only checked in mode 2 (`0x250a58`). **On the device the hint box is not drawn**, so the player sees
+  the shop, nothing to dismiss, and Start does nothing. This is the "missing HUD part" of the user's test, a GS/GLES bug.
+- **Pause works (`panel-152443`, measured):** the shop opens with hint 0x19 (invisible); Cross dismisses it and the Remembrall
+  (mode 4) opens; Select leaves it and hint 0x1a opens (invisible); Cross dismisses it (mode 2 at 254 s); **Start opens the
+  pause menu (mode 3 at 260.9 s)**; Down, then Cross opens **the save screen (mode 6 at 277.9 s)**, which asks the card for its
+  info (196 `[mc] cmd 0x01`). Script: `CROSS@236+0.5,SELECT@243+1.2,CROSS@252+1.2,START@259+1.2,DOWN@268+1.2,CROSS@276+1.2`
+  after the path to the shop. Writing a save not done yet (save screen's own steps unknown; its picture not checked).
+- **Short taps are lost in slow frames:** in the Remembrall one frame in three takes ~680 ms; 0.3 s presses of Select and Start
+  were never seen by the game. Scripted presses need >= 1.2 s; the fix for players is sticky presses in `runner/pad_sdl.cpp`
+  (keep a press until one pad read has returned it). Not done.
+
+### Ollivanders picture (2026-11-09): not a GLES bug (measured)
+
+- **Tool:** `PS2PORT_GSDUMP=FILE:START:VSYNCS` (private runtime, `gs_frontend.cpp`; in `trial/ps2recomp-m1-runtime.patch`) writes
+  a PCSX2-format GS dump of what the GS receives; gsplay replays it (checked on a PC dump of the loading screen).
+- **Device dump of the hint frame** (`D:\ps2port-data\raw\own_hint.gs`, 30 vsyncs, 76 MB): **gsplay's software GS draws the
+  same wrong picture as GLES** (white walls, pink floor, green shelves, diagonal line, no hint box). So the GS input is wrong;
+  the GLES backend is not the cause.
+- In the stream: **no 2D primitive at all** in hint mode (the hint draws through the game's VU1 2D API, `0x2ded18`/`0x2defe8`,
+  MSCAL 0x03 for sprites), so the hint box is lost before the GS. The shop streams 82 textures a frame (8-bit textures uploaded
+  as CT32, CLD 1 palettes); decoded right after upload they are all correct, and the upload/draw order is right. 7 % of the
+  modulate pass's vertex colours are at 224-255 (near saturation): too-bright lighting is the main suspect for the white walls.
+- **Next:** the PCSX2 reference of this scene (asked of the user: savestate slot 4, Ctrl+Shift+F8 and Shift+F8 dumps, F8
+  screenshot, `file_dumps.py O01`); compare its stream (2D prims, vertex colours) with ours. `PS2PORT_VU1_LOG=1` (runner,
+  built in `build-m2/aarch64/vu1log/`, not yet run) shows VU1 entries and kicks per second: does MSCAL 0x03 run in hint mode?
+  Interpreters (`PS2PORT_NO_VU0=1 PS2PORT_NO_VU1=1`) are too slow to reach the shop in 330 s.
