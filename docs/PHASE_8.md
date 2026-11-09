@@ -131,3 +131,26 @@ to build FFmpeg from that source** (the tool's permission check stopped it: code
   game makes and whether DemuxPssRing gets data; then either feed EOF from the game's own stream state (the IOP stream
   driver's end, or `sceMpegIsEnd` semantics) and drop the `0x171904` write, or keep the stub. **Until then any new aarch64
   build must use `PS2PORT_MOVIE_STUB=1`** (the device's current `runner-aarch64` predates the change and still plays).
+
+### Thermal run 1 (2026-11-09, `panel-121834`, 1.416 GHz, scripted path to the shop, measured)
+
+Device binary: the device's own `runner-aarch64` of 2026-11-08 14:45 (md5 `17acdb0a`; local copy in
+`build-m2/aarch64/device-1445/`). Before: CPU 52.5 C, clock 1.2 GHz idle, cooling 0, uptime 2,171 s. After: 63.2 C, uptime 3,388 s.
+
+| s | CPU zone C | MHz min | cooling max | core busy % | |
+|---|---|---|---|---|---|
+| 0-90 | 52.5-64.5 | 1416 | 0 | 33-43 | boot, menu |
+| 150-210 | 64.8-70.9 | 1416 | 0 | 68-78 | cutscenes, shop |
+| 240-480 | 69.6-73.5 | 1416 | 0-1 | 54-80 | **gameplay, Harry idle in the shop: 47-60 ms frames** |
+| 510-1200 | 57.8-62.7 | 1416 | 0 | 9-16 | **hung**: 0 game frames/s |
+
+- **Hang at about 505 s, not heat:** `[guest-branch:missing-target] kind=IndirectCall op=JALR source=0x289a68 target=0x28a140`.
+  0x28a140 is not in the function map (`functions.txt`, `register_functions.cpp`): another hole like `0x1af300` (fix recipe:
+  `scripts/ps2recomp_gen_fixes.py` MID_ENTRIES or an own function, then regenerate and rebuild). It appears after about four
+  minutes idle in the shop, so it would also stop real play. Frames had slowed from ~47 ms to ~60 ms at about 460 s just
+  before (something started in the scene).
+- **Heat:** in gameplay the CPU zone levelled at **69.6-73.5 C after 4-8 minutes**, cooling state at most 1, clock never
+  lowered. The 2026-11-08 soak (same clock, same scene, older binary) was at 76.6-79.9 C at 240-360 s and reached 85 C at
+  806 s: **about 7 C cooler today at the same point** (ambient or how the device lay; not controlled). Too short to judge
+  60 minutes.
+- Runs at 1.2 and 1.0 GHz not done (item budget; the hang has to be fixed first for sustained runs).
