@@ -154,3 +154,23 @@ Device binary: the device's own `runner-aarch64` of 2026-11-08 14:45 (md5 `17acd
   806 s: **about 7 C cooler today at the same point** (ambient or how the device lay; not controlled). Too short to judge
   60 minutes.
 - Runs at 1.2 and 1.0 GHz not done (item budget; the hang has to be fixed first for sustained runs).
+
+### Hole fix, guard bug, thermal run 2 (2026-11-09, measured)
+
+- **Five merged functions fixed** (`scripts/ps2recomp_gen_fixes.py`, found with a lui/addiu scan for code addresses right
+  after a `jr ra` that are not in the map): `0x28a140` (the game's float arithmetic handler, the shop hang) and
+  `0x1ffdc0`, `0x1ffdc8`, `0x1ffdd0`, `0x1ffdd8` (one-line default callbacks). The script now adds a re-entry switch where
+  PS2Recomp emitted none. aarch64 build md5 `5a9eec8d` (movie stub on). **On the device (`panel-133511`): no missing
+  target in 1,120 s, the game went on past the scene change at ~650 s.**
+- **Guard bug (safety):** the device's `sh` is dash; its `kill` rejects `--`, so `device_guard.sh`'s thermal stop and
+  final cleanup did nothing (silenced by `2>/dev/null`), probably since the setsid change of 2026-11-08. `panel-133511`
+  printed THERMAL STOP at 85.0 C and ran on to **86.7 C** until stopped by hand (no reboot). Fixed (no `--`), tested on the
+  device with a CPU burner: stop while running after 7 s, exit 3, nothing left over.
+- **Concurrent runs:** the user's play sessions ran while test runs were going: `play-122137` during thermal run 1 ended in
+  the OOM killer (`Killed`, 18,717 `[gs-draw] packet failed: std::bad_alloc`): dropped GS packets explain the user's
+  photo (missing and wrong textures, missing HUD, a stray line); `play-133836`, `play-134429` produced nothing. How they got
+  past `device_detach.sh`'s BUSY check is not known yet.
+- **Thermal run 2 (`panel-133511`, 1.416 GHz, started heat-soaked at 64-66 C):** 85 C at ~360 s, then a **plateau at
+  83.3-86.7 C** to 1,120 s, frames 44.4-46 ms p50, cores 66-75 % busy. Cooling states stayed 1-2, which cap the clock at
+  1.6/1.5 GHz (states count down from 1,704 MHz), so the kernel never lowered our 1.416 GHz: below the 115 C critical trip
+  the guard is the only protection. Runs at 1.2 and 1.0 GHz still to do (device was in use).
