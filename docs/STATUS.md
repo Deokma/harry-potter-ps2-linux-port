@@ -1,5 +1,9 @@
 # Where the port stands (2026-11-08, end of session)
 
+
+**Update 2026-11-09:** movies hang at the first movie on the PC (cause known, `docs/PHASE_8.md`); a function-map hole at
+`0x28a140` stops the game after ~4 minutes idle in the shop (found by the thermal run); saves wait for the user's play test;
+studies in `docs/STUDY_VU1_GPU.md` and `docs/STUDY_BUILD_OPT.md`; plan in `docs/PLAN.md`. Handoff: `NOTES.md`.
 Harry Potter and the Philosopher's Stone (PS2, NTSC SLUS-20826) on the Anbernic RG40XX H. Percentages are **estimates**;
 what was measured is said so.
 

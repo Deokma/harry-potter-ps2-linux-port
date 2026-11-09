@@ -8,6 +8,21 @@ Phase reports live in `docs/PHASE_N.md`.
 **A fresh session needs only this section and `docs/PHASE_4.md`.** Older state is under
 "History" below; read it only when a pointer here sends you there.
 
+**Session 2026-11-09 (plan `docs/PLAN.md`; stopped after items 3-5 for the user's architecture decision):**
+- Movies (item 1): `runner/build.sh` flag bug fixed, x86 links with FFmpeg; **PC boot hangs at the first movie** (black from
+  13.6 s): PS2Recomp's `sceMpegGetPicture` waits for a CD-stream end that only its own `sceCdSt*` stubs report; this game
+  streams through the emulated IOP. Also a stray guest write to `0x171904` in the stub's `sceMpegReset`. Any new aarch64
+  build: `PS2PORT_MOVIE_STUB=1` (+ `scripts/ps2recomp_movie_stub.py`). Details `docs/PHASE_8.md`, "Movies, first PC test".
+- Saves (item 2): where the game saves found statically (pause menu item 1, save-point objects; `docs/PHASE_8.md`, Saves);
+  waiting for the user's play test.
+- Thermal (item 3): trips 60/70 C passive, **115 C critical**; run 1 at 1.416 GHz levelled at 69.6-73.5 C in gameplay, then
+  **hung at ~505 s: indirect call to `0x28a140`, a function-map hole** (fix with `scripts/ps2recomp_gen_fixes.py`, rebuild).
+  1.2/1.0 GHz runs not done (budget). Profile run right after started heat-soaked at 63 C and reached 83.2 C in 300 s.
+- Studies: `docs/STUDY_VU1_GPU.md` (item 4), `docs/STUDY_BUILD_OPT.md` (item 5; PGO and static IOP marked).
+- Binaries: `build-m2/aarch64/runner-aarch64` is now the device's 2026-11-08 14:45 build (md5 `17acdb0a`, what `play.sh`
+  uploads); the 15:46 build is `runner-aarch64.1546` (matches the unstripped `runner`; ran 300 s on the device, fine).
+- graphify: `graphify-out/` (local only, in `.git/info/exclude`), 2,062 nodes; `private/` not included.
+
 **Goal now (user, 2026-11-06):** a thin slice to the title screen on the RG40XX H with
 real GLES picture, audio and input stubbed, no gameplay. No more scene measuring. Plan and
 milestones M1–M5: `docs/PHASE_4.md` (approved; results and revised estimates at its end).
