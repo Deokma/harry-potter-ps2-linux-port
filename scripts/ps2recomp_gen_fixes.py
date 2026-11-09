@@ -26,7 +26,8 @@ BODY = (
     "\n// ps2port: see scripts/ps2recomp_gen_fixes.py\n" + SIG + " {\n"
     "    SET_GPR_U64(ctx, 2, GPR_U64(ctx, 4));\n    ctx->pc = GPR_U32(ctx, 31);\n}\n"
 )
-MID_ENTRIES = [0x1af300, 0x126428, 0x2a3180, 0x2fff98, 0x3020e8, 0x3021a0]
+MID_ENTRIES = [0x1af300, 0x126428, 0x2a3180, 0x2fff98, 0x3020e8, 0x3021a0,
+               0x28a140, 0x1ffdc0, 0x1ffdc8, 0x1ffdd0, 0x1ffdd8]  # last five: found 2026-11-09 by a lui/addiu scan
 TABLE_BASE = 0x100040
 FUNCTION_MAP = Path(__file__).resolve().parents[1] / "private/third_party/trial/function_map.csv"
 
@@ -99,8 +100,14 @@ def mid_entries(folder, functions):
         if case not in s:
             sw = re.search(r"switch \(ctx->pc\) \{\r?\n", s)
             if not sw:
-                print(f"  0x{address:x}: {fn} has no re-entry switch")
-                continue
+                # PS2Recomp emits a re-entry switch only for functions with resume points: add an empty one before the
+                # function's first pc store (0x28a140 lives in such a function).
+                first = re.search(rf"^    ctx->pc = 0x{start:x}u;\r?\n", s, re.M)
+                if not first:
+                    print(f"  0x{address:x}: {fn} has no re-entry switch and no first pc store")
+                    continue
+                s = s[: first.start()] + "    switch (ctx->pc) {\n        default: break;\n    }\n\n" + s[first.start():]
+                sw = re.search(r"switch \(ctx->pc\) \{\r?\n", s)
             if f"label_{address:x}:" not in s:
                 c = re.search(rf"^\s*// 0x{address:x}: ", s, re.M)
                 if not c:
