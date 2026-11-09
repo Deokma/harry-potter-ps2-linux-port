@@ -214,3 +214,22 @@ Device binary: the device's own `runner-aarch64` of 2026-11-08 14:45 (md5 `17acd
   screenshot, `file_dumps.py O01`); compare its stream (2D prims, vertex colours) with ours. `PS2PORT_VU1_LOG=1` (runner,
   built in `build-m2/aarch64/vu1log/`, not yet run) shows VU1 entries and kicks per second: does MSCAL 0x03 run in hint mode?
   Interpreters (`PS2PORT_NO_VU0=1 PS2PORT_NO_VU1=1`) are too slow to reach the shop in 330 s.
+
+### Ollivanders picture fixed: the VIF1 DMA chain was cut at 4,096 tags (2026-11-09, measured on the device)
+
+- **Reference:** `D:\ps2port-data\raw\N02_1.gs` (PCSX2, NTSC) is Ollivanders; gsplay's software GS draws it right (wood floor,
+  red carpet, HUD, "TALK TO"). Its frame has passes ours lacked: render-to-texture shadows (2 targets), the lightmap multiplied
+  by the base texture one colour channel at a time (3 passes, ALPHA 0x89 = Cd*As, FBMSK per channel), a darkening shadow pass
+  from a CT16 target, additive light beams, alpha-blended draws, and the HUD.
+- **Measured:** with `PS2PORT_VU1_LOG=1`, VU1's 2D programs (entries 3 and 0xf) never ran in play or hint mode, while the game's 2D
+  API did build sprite batches every frame (`PS2PORT_WATCH` on its write pointer `0x3aa440`, `PS2PORT_WATCH_EVERY=10`).
+- **Cause:** the runtime's DMA chain walk (`ps2_memory.cpp`, mode 1) stopped after `kMaxChainTags = 4096` tags and treated the
+  transfer as done. The shop's VIF1 chain is longer, so everything the game links late (HUD, shadows, extra passes) was dropped.
+  Now `1 << 20`, with a one-time `[dma] ... chain cut` warning (never printed in the test). In the runtime patch.
+- **Result (`panel-201734`, build `a2fdbcaf`, now `build-m2/aarch64/runner-aarch64`; old one kept as `runner-aarch64.5a9eec8d`):**
+  hint boxes with text, lightning bolt, button ring, Remembrall icon, wood floor, red carpet, light beams, Ollivander, and the
+  pause menu (Continue, Save Game, ...), as in the user's PCSX2 screenshots. VU1 entries 3, 0xc, 0xf run; room-program kicks
+  48k -> 60k a second.
+- **Cost (stop rule):** shop frames **p50 66-67 ms, p90 78-80 ms** (hint and play), were 44.5 / 53.5 ms. Game thread 90 -> 65-70 %
+  (waits now), GsDraw 36 -> 57 %, main (GL) 24 -> 36 %; GL runs per 5 s 5,490 -> 11,319, GL execute 196 -> 366 ms. Over 55 ms:
+  stopped for the user's decision.

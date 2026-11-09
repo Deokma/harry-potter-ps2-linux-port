@@ -148,7 +148,10 @@ void ps2portPollFailed(uint32_t returnAddress, const uint8_t *rdram)
             std::fprintf(stderr, "[watch] %s\n", w);
         }
     }
-    if (!watch.empty() && rdram)
+    // PS2PORT_WATCH_EVERY=N: compare only every N game frames (for words that change every frame)
+    static const uint64_t watchEvery = std::getenv("PS2PORT_WATCH_EVERY") ? std::max<uint64_t>(1u, std::strtoull(std::getenv("PS2PORT_WATCH_EVERY"), nullptr, 10)) : 1u;
+    static uint64_t watchCalls = 0;
+    if (!watch.empty() && rdram && (watchCalls++ % watchEvery) == 0)
     {
         auto rd32 = [rdram](uint32_t a) -> uint32_t {
             a &= 0x1FFFFFFCu;
