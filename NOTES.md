@@ -22,6 +22,11 @@ Phase reports live in `docs/PHASE_N.md`.
 - Binaries: `build-m2/aarch64/runner-aarch64` is now the device's 2026-11-08 14:45 build (md5 `17acdb0a`, what `play.sh`
   uploads); the 15:46 build is `runner-aarch64.1546` (matches the unstripped `runner`; ran 300 s on the device, fine).
 - graphify: `graphify-out/` (local only, in `.git/info/exclude`), 2,062 nodes; `private/` not included.
+- **Later 2026-11-09 (user: "fix and rerun"):** five map holes fixed (0x28a140 shop hang verified gone on the device);
+  **guard bug fixed** (dash `kill --`: thermal stops never killed the run; a run reached 86.7 C); thermal run 2 at 1.416 GHz
+  plateaued at 83-87 C from a warm start. **Next:** the user's clean play test with build `5a9eec8d` (alone on the device),
+  then thermal runs at 1.2/1.0 GHz (`scratchpad` chain script: copy logic from PHASE_8 "Thermal run 1"), then the
+  architecture decision. Proposed: sticky pad presses (a press held until the game has read it) for low-fps menus.
 
 **Goal now (user, 2026-11-06):** a thin slice to the title screen on the RG40XX H with
 real GLES picture, audio and input stubbed, no gameplay. No more scene measuring. Plan and
