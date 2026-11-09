@@ -181,6 +181,7 @@ namespace
 uint16_t ps2portScriptButtons() { return g_scriptButtons.load(std::memory_order_relaxed); }
 
 void ps2portDrawThrottle(); // ps2_memory.cpp (private runtime)
+void ps2portFrameMark();    // the same: frame sync, the game's next BGCOLOR write is its flip
 
 void ps2portPollFailed(uint32_t returnAddress, const uint8_t *rdram)
 {
@@ -188,6 +189,7 @@ void ps2portPollFailed(uint32_t returnAddress, const uint8_t *rdram)
         return;
     // the game waits for its vsync here: where it waits for the display too when the display is too far behind
     ps2portDrawThrottle();
+    ps2portFrameMark();
     const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     if (g_lastMarkNs != 0)
     {
@@ -503,6 +505,12 @@ void ps2portAudioStats(double &mixerRate, uint64_t &underruns);
 bool ps2portDrawWantsLatch();
 void ps2portDrawLatched();
 void ps2portDrawThrottle();
+// frame sync (2026-11-10): the game's flips, counted; the last one recorded in full; that its latch is done (the game goes on)
+bool ps2portFrameSyncOn();
+void ps2portFrameDisplayIdle(bool idle);
+uint64_t ps2portFrameRecorded();
+void ps2portFrameShown(uint64_t flip);
+uint64_t ps2portFrameSyncCounts(int which);
 
 bool ps2portDisplayInit(PS2Runtime &runtime)
 {
@@ -533,17 +541,38 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
     static const bool wantStats = std::getenv("PS2PORT_M5_STATS") != nullptr;
 
     ps2portPadPoll();
-    // Each call is one vsync's frame; a swap may already have taken a vsync or more.
+    // Frame sync: one latch for each whole frame the game flipped, as soon as it is recorded. Without it (PS2PORT_FRAME_SYNC=0), and
+    // while the game does not flip (loads), each call is one guest vsync's frame; a swap may already have taken a vsync or more.
+    static const bool frameSync = ps2portFrameSyncOn();
+    static uint64_t takenFlip = 0;
+    static double lastFlipAt = -1e9;
     const double waitStart = nowMs();
     uint64_t tick = runtime.eeScheduler().currentVSyncTick();
+    uint64_t recorded = ps2portFrameRecorded();
     // ... or at once when stage B waits for a latch (its backlog is full; the EE may be waiting on it, so no vsync would come)
-    while (tick == last && nowMs() - waitStart < 50.0 && !ps2portDrawWantsLatch())
+    const auto due = [&]()
     {
+        if (ps2portDrawWantsLatch())
+            return true;
+        if (!frameSync)
+            return tick != last;
+        return recorded != takenFlip || (tick != last && nowMs() - lastFlipAt > 100.0);
+    };
+    for (int spins = 1; !due() && nowMs() - waitStart < 50.0; ++spins)
+    {
+        ps2portFrameDisplayIdle(true); // nothing to show: the game need not wait for the display at its flip
         std::this_thread::sleep_for(std::chrono::microseconds(500));
+        if ((spins & 7) == 0)
+            ps2portPadPoll(); // every 4 ms or so: a short tap is not missed between two frames
         tick = runtime.eeScheduler().currentVSyncTick();
+        recorded = ps2portFrameRecorded();
     }
-    if (tick == last && !ps2portDrawWantsLatch())
+    if (!due())
         return;
+    ps2portFrameDisplayIdle(false);
+    if (recorded != takenFlip)
+        lastFlipAt = nowMs();
+    takenFlip = recorded;
     const uint64_t passed = last == ~0ull ? 1u : tick - last;
     last = tick;
     ++shown;
@@ -554,6 +583,7 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
     const double t0 = nowMs();
     runtime.gs().latchHostPresentationFrame();
     ps2portDrawLatched();
+    ps2portFrameShown(takenFlip);
     const double t1 = nowMs();
     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     sampling(seconds);
@@ -566,6 +596,28 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
     gsplayGlSwap();
     const double t3 = nowMs();
 
+    static const bool lagLog = wantStats || std::getenv("PS2PORT_LAG_LOG") != nullptr;
+    if (lagLog)
+    {
+        static double lagStart = t3;
+        static uint64_t before[6] = {}, latches = 0;
+        ++latches;
+        if (t3 - lagStart >= 5000.0)
+        {
+            uint64_t c[6];
+            for (int i = 0; i < 6; ++i)
+                c[i] = ps2portFrameSyncCounts(i);
+            const double span = (t3 - lagStart) / 1000.0;
+            const uint64_t flipped = c[0] - before[0], lagged = c[5] - before[5];
+            std::fprintf(stderr, "[lag] t=%.0f sync %s: game flips/s %.1f, latches/s %.1f; flip to replayed %.1f ms avg, %.1f max; game waited %llu times, %.1f ms a frame, %llu time-outs\n",
+                         seconds, frameSync ? "on" : "off", flipped / span, latches / span, lagged ? (c[4] - before[4]) / 1e6 / lagged : 0.0,
+                         ps2portFrameSyncCounts(6) / 1e6, (unsigned long long)(c[1] - before[1]),
+                         flipped ? (c[2] - before[2]) / 1e6 / flipped : 0.0, (unsigned long long)(c[3] - before[3]));
+            std::memcpy(before, c, sizeof before);
+            latches = 0;
+            lagStart = t3;
+        }
+    }
     if (!wantStats)
         return;
 

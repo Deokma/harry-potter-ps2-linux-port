@@ -12,7 +12,7 @@ chmod +x runner-aarch64
   if [ "${a:-0}" -gt 420000 ]; then echo "MEMORY STOP: runner at $a kB anonymous"; kill -TERM "$p"; sleep 3; kill -KILL "$p" 2>/dev/null; fi
 done ) > "$d/memory.txt" 2>/dev/null &
 mpid=$!
-env PS2PORT_DISPLAY=1 PS2PORT_HEADLESS=1 PS2PORT_PAD_LOG=1 PS2PORT_MC_LOG=1 PS2PORT_FRAME_LOG="$d/frames.txt" "$@" \
+env PS2PORT_DISPLAY=1 PS2PORT_HEADLESS=1 PS2PORT_PAD_LOG=1 PS2PORT_MC_LOG=1 PS2PORT_LAG_LOG=1 PS2PORT_FRAME_LOG="$d/frames.txt" "$@" \
     ./runner-aarch64 /userdata/ps2bench/game/SLUS_208.26 > "$d/log.txt" 2>&1
 rc=$?
 kill "$mpid" 2>/dev/null

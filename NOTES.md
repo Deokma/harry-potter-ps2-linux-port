@@ -42,6 +42,17 @@ Phase reports live in `docs/PHASE_N.md`.
   (end of stream from the game's own stream state, drop the `0x171904` write); (5) thermal runs at 1.2/1.0 GHz with the
   fixed guard; (6) sticky pad presses for low-fps menus.
 
+**2026-11-10: input lag fixed at its cause, frame sync (user: "very significant input lag ... the menu lags a lot when there's
+fog").** The game could run up to 16 MB of drawing (about 5 s in the fog menu) ahead of the screen; now at most one frame
+(`docs/PHASE_8.md`, "Input lag"). Fog menu: one screen update per ~5 s -> 14-15 a second; shop frame rate unchanged; Continue
+reaches play at 58-66 s after boot (was 154 s). `PS2PORT_FRAME_SYNC=0` turns it off; `[lag]` lines in every play log
+(`PS2PORT_LAG_LOG=1`). Play binary `9aba5f4c` (second version: the wait is at the game's flip, only while the display is busy;
+measured over boot and intro only). **The user was pressing buttons on the device during the test runs, so tests stopped: not yet
+measured in the fog menu or the shop with `9aba5f4c`, and no GS dump of the fog menu yet.** Open: the fog menu's GPU cost (about
+60 ms a frame, 15 frames a second), game speed in play, the user's play test. Commands that worked: state-driven presses
+`PS2PORT_PAD_SEQ=2:START:60,2:DOWN:60,2:CROSS:40` (title, Continue, load; needs nobody touching the pad), panel raw to PNG:
+page 2 of `/dev/fb0` (offset 640*480*4).
+
 **Late 2026-11-09: saves work (user: "Keep it, do saves").** Save from the pause menu, fresh boot, Continue loads into Ollivanders
 (`docs/PHASE_8.md`, "Saves work"). Fix: the memory card stub now hands out the lowest free descriptor from 0 (the game reads with
 sceMcOpen's return value). Sticky pad presses on (`PS2PORT_PAD_STICKY=0` off), not yet tried by a player. State-driven test presses:

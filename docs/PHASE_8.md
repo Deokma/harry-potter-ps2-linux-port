@@ -257,3 +257,48 @@ Device binary: the device's own `runner-aarch64` of 2026-11-08 14:45 (md5 `17acd
 - Notes: the save's time shows 15:45 where the device said 21:45 (clock stub's time zone, 6 h); the device's card now holds this
   save in slot 1 (copy in `D:\ps2port-data\saves\first-save-20261109`, the folder before slot 1 was written).
 - Play binary now `1b2f41a8` (chain fix, card fix, sticky presses); before: `runner-aarch64.a2fdbcaf`, `runner-aarch64.5a9eec8d`.
+
+### Input lag: the game ran seconds ahead of the screen (2026-11-10, measured on the device)
+
+- **User report:** very large input lag, movement sometimes only after a couple of seconds; the menu with the fog "lags a lot".
+- **Cause (in `panel-220243`, build `1b2f41a8`):** what the game draws waits for the display in a queue bounded in bytes (16 MB
+  recorded since the last latch), not in frames. In the main menu with the fog the GPU needs about 60 ms a frame and the game
+  makes 60 frames a second, so the game ran ahead until 16 MB were recorded and each latch then replayed about 5 s of frames:
+  latch avg 4.6-5.6 s, 0.2 screen updates a second, game frames up to 33 ms with a 1 s stall (the throttle's time-out) about every
+  15 frames, all CPU threads nearly idle. The same queue is behind every stretch where the GPU is the slow side.
+- **Fix, frame sync (`ps2_memory.cpp` in the private runtime, `runner/display.cpp`):** the game's flip (its BGCOLOR write, the
+  last register of the flip in `FUN_002e2268`, armed by the vsync wait's mark at `0x2cd6c8`) sends a marker through stage A and
+  stage B behind everything the frame kicked. The main thread latches when a marker is recorded (one latch a whole frame; by guest
+  vsync ticks, as before, only when the game has not flipped for 100 ms: loads). If the display is still busy with an earlier
+  frame at the flip, the EE waits right there, before it reads the pad for the next frame, until its frame is latched (time-out
+  250 ms, VIF1 interrupts served meanwhile); if the display is idle the EE is the slow side and never waits. The 16 MB bound stays
+  as a guard. `PS2PORT_FRAME_SYNC=0` turns the waiting off (markers still run). The pad is now polled every 4 ms while the main
+  thread waits, not once a latch.
+- **New log line:** `[lag]` every 5 s with `PS2PORT_LAG_LOG=1` (on in `scripts/play.sh` runs and with `PS2PORT_M5_STATS`): flips and
+  latches a second, flip to replayed (ms, avg and max), how often and how long the game waited, time-outs.
+- **Measured, first version (EE waited at the next frame's mark; `panel-004716`, `panel-005158`):**
+
+  | Where | Before (`1b2f41a8`) | With frame sync |
+  |---|---|---|
+  | Main menu with the fog | one screen update per ~5 s (latch 4.6-5.6 s) | 14-15 updates a second; flip to replayed 58-60 ms avg, 184 max; game waits 52-53 ms a frame |
+  | Language screen | - | 59.7 frames a second, flip to replayed 16 ms |
+  | Shop (Ollivanders) | 16.7-17.1 game frames/s, 21.8 latches/s | 14.5-18.7 game frames/s, one latch a frame, flip to replayed 19-29 ms avg; game waited 0-3 times per 5 s |
+  | Continue to play | 154 s after boot (the menus ran at about a quarter speed) | 58-66 s after boot |
+
+  No time-outs in the fog menu or the shop (one in 130 s of `panel-004716`). Loads take longer in frames than before (mode 0 to
+  play 14-15 s, was 10.5 s): the loading screen flips up to 89 times a second on its own and is now paced by the 60 Hz swap.
+- **Second version (the one in the play binary `9aba5f4c`):** waiting at the next mark left a finished frame waiting for a whole
+  display frame (pad read to screen about 3 GPU frames where the GPU is the slow side); the wait is now at the flip itself and
+  only while the display is busy (about 2 GPU frames). Measured in `panel-012130` over boot, language screen (59.7 frames/s, flip
+  to replayed 12.7 ms, the wait taken 299 times per 5 s) and the New Game intro: no time-outs. **Not yet measured in the fog menu
+  or the shop** (see the next point).
+- **The user was at the device during these runs** (`PS2PORT_PAD_LOG=1` in `panel-011233` and `panel-012130` shows real button
+  presses), so the scripted routes went different ways each run (New Game instead of Continue, the fog menu left early) and no GS
+  dump of the fog menu was captured. Device tests stopped there.
+- **Still open:** (1) the fog menu itself: about 60 ms of GPU a frame for about 6 runs and 1,500 vertices (the cost shows in the
+  swap, 47 ms avg; `execute` is 14 ms a second), so it runs at about 15 frames a second and the game, which steps per frame, at
+  about a quarter speed there. Needs a GS dump of that menu (`PS2PORT_GSDUMP=FILE:SECONDS:2` while the menu is up) replayed with
+  `gsgles`; (2) the user's own play test of lag and of sticky presses; (3) game speed in play (the game sees 2 vblanks a frame:
+  about half speed at 67 ms frames), unchanged; (4) without a press the language screen stays (seen once, `panel-005713`):
+  correct, but scripted runs need a Cross first; (5) the PC runner stops in the New Game intro at the second subtitle (no
+  audio there), so the main menu cannot be reached on the PC by New Game's route.
