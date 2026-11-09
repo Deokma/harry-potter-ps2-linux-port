@@ -42,6 +42,13 @@ Phase reports live in `docs/PHASE_N.md`.
   (end of stream from the game's own stream state, drop the `0x171904` write); (5) thermal runs at 1.2/1.0 GHz with the
   fixed guard; (6) sticky pad presses for low-fps menus.
 
+**Evening 2026-11-09: Ollivanders picture fixed.** The runtime's VIF1 DMA chain walk stopped at 4,096 tags and dropped the rest of
+a long frame (HUD, hint boxes, shadows, the lightmap x texture passes). Now 1<<20 (`ps2_memory.cpp`, in the runtime patch). The
+device shows the shop like the user's PCSX2 screenshots (`docs/PHASE_8.md`, last section). Play binary updated (`a2fdbcaf`; old
+`runner-aarch64.5a9eec8d`). **Shop frames now p50 ~67 ms (were 44.5): over 55 ms, waiting for the user's decision on speed.**
+PCSX2 reference of the shop: `D:\ps2port-data\raw\N02_1.gs` (NTSC, "first playable area"). Test binaries with the debug hooks:
+`build-m2/aarch64/chain/`. Next after the decision: write a save and Continue; sticky pad presses (`runner/pad_sdl.cpp`).
+
 **Session 2026-11-09 afternoon (textures and pause):** see `docs/PHASE_8.md`, "Pause menu" and "Ollivanders picture".
 - **Pause works:** the shop opens in an invisible hint box (mode 5, `0x38c194`); Cross, Select (Remembrall), Cross, then Start opens
   the pause menu and Down + Cross the save screen (mode 6). Hold scripted presses >= 1.2 s (680 ms frames in the Remembrall).
