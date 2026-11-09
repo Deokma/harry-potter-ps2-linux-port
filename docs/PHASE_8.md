@@ -233,3 +233,27 @@ Device binary: the device's own `runner-aarch64` of 2026-11-08 14:45 (md5 `17acd
 - **Cost (stop rule):** shop frames **p50 66-67 ms, p90 78-80 ms** (hint and play), were 44.5 / 53.5 ms. Game thread 90 -> 65-70 %
   (waits now), GsDraw 36 -> 57 %, main (GL) 24 -> 36 %; GL runs per 5 s 5,490 -> 11,319, GL execute 196 -> 366 ms. Over 55 ms:
   stopped for the user's decision.
+
+### Saves work: write, restart, Continue (2026-11-09, measured on the device)
+
+- **Test tool:** `PS2PORT_PAD_SEQ=VALUE:BUTTON[:SETTLE],...` (runner, `display.cpp`): presses driven by the game's state, counted in
+  game frames: wait until the word `PS2PORT_PAD_SEQ_WORD` (default the mode `0x38c194`; `*` = any) holds VALUE for SETTLE frames,
+  screenshot (to `PS2PORT_FRAME_DIR`; `PS2PORT_FRAME_EVERY=0` keeps only these), press 3 frames, release 5. Timed scripts failed:
+  the shop came 30 s earlier in one run, and the Remembrall's 700-900 ms frames swallowed taps.
+  Save path used: `5:CROSS:10,4:SELECT:40,5:CROSS:10,2:START:10,3:DOWN:10,3:CROSS:5,6:CROSS:40,6:UP:20,6:CROSS:10,6:CROSS:60`.
+- **Creating the save file** (first time, "No ... save data ... create one now? Yes"): the game writes `icon.sys` (964 B),
+  `HPATPS.ICO` (117,762 B) and `BASLUS-20826-HPATPS` (8 + 58,464 B) into `mc0/BASLUS-20826-HPATPS/`: worked as it was.
+- **Bug fixed (runtime, `Kernel/Stubs/MemoryCard.cpp`):** every later read of the save failed (-4) in a loop. The game (`0x2da3f8`)
+  reads with the return value of `sceMcOpen` (0 = success) instead of the descriptor `sceMcSync` returns; on a PS2 mcserv hands out
+  the lowest free descriptor, 0. The stub counted up from 1. Now lowest free from 0. Found and checked on the PC first (main menu
+  reads the save; `PS2PORT_MC_LOG=1` now also prints open path/flags and read/close descriptors).
+- **Saving (`panel-214117`):** "Select file for save" (3 slots), slot 1, "Are you sure ...? Yes" (No is the default), the game
+  writes the file (8 + 58,464 B, flush, close), back to the pause menu.
+- **Continue after a fresh boot (`panel-220243`):** "Select a Game to Load" lists the save, "Checking memory card ...", "Are you
+  sure you wish to load this game?", then **play in Ollivanders at 154 s** (New Game reaches it at ~222 s).
+- **Sticky presses (`runner/pad_sdl.cpp`):** a button that went down at a display poll is reported to the next two game reads even
+  if released, so a tap is not lost in a slow frame. On by default (`PS2PORT_PAD_STICKY=0` turns it off). **Not yet tried by a
+  player** (scripted presses use their own path).
+- Notes: the save's time shows 15:45 where the device said 21:45 (clock stub's time zone, 6 h); the device's card now holds this
+  save in slot 1 (copy in `D:\ps2port-data\saves\first-save-20261109`, the folder before slot 1 was written).
+- Play binary now `1b2f41a8` (chain fix, card fix, sticky presses); before: `runner-aarch64.a2fdbcaf`, `runner-aarch64.5a9eec8d`.

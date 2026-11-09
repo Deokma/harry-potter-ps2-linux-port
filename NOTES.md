@@ -42,6 +42,12 @@ Phase reports live in `docs/PHASE_N.md`.
   (end of stream from the game's own stream state, drop the `0x171904` write); (5) thermal runs at 1.2/1.0 GHz with the
   fixed guard; (6) sticky pad presses for low-fps menus.
 
+**Late 2026-11-09: saves work (user: "Keep it, do saves").** Save from the pause menu, fresh boot, Continue loads into Ollivanders
+(`docs/PHASE_8.md`, "Saves work"). Fix: the memory card stub now hands out the lowest free descriptor from 0 (the game reads with
+sceMcOpen's return value). Sticky pad presses on (`PS2PORT_PAD_STICKY=0` off), not yet tried by a player. State-driven test presses:
+`PS2PORT_PAD_SEQ` (counted in game frames). Play binary `1b2f41a8`; the device's card holds a save in slot 1 (Ollivanders).
+Open: save time shows 6 h off (clock stub time zone); shop frames ~67 ms (user keeps the correct picture).
+
 **Evening 2026-11-09: Ollivanders picture fixed.** The runtime's VIF1 DMA chain walk stopped at 4,096 tags and dropped the rest of
 a long frame (HUD, hint boxes, shadows, the lightmap x texture passes). Now 1<<20 (`ps2_memory.cpp`, in the runtime patch). The
 device shows the shop like the user's PCSX2 screenshots (`docs/PHASE_8.md`, last section). Play binary updated (`a2fdbcaf`; old

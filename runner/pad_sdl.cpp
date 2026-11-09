@@ -26,6 +26,10 @@ namespace
     std::atomic<bool> g_available{false};
     std::atomic<uint32_t> g_buttons{0}; // bit n: raylib GamepadButton n
     std::atomic<uint64_t> g_axes{0};    // LX, LY, RX, RY: int16 each, as SDL reports them
+    // Sticky presses: a button that went down at a poll is reported to the next two game reads even if it is already up, so a
+    // tap shorter than a slow game frame (the Remembrall has 700-900 ms frames) still reaches the game. PS2PORT_PAD_STICKY=0: off.
+    std::atomic<uint32_t> g_latched{0}, g_latchedOld{0};
+    uint32_t g_prevButtons = 0;
 
     bool g_ready = false;
     bool g_dbLoaded = false;
@@ -220,6 +224,10 @@ void ps2portPadPoll()
         axes |= static_cast<uint64_t>(static_cast<uint16_t>(a[i])) << (16 * i);
     }
     g_axes.store(axes, std::memory_order_relaxed);
+    static const bool sticky = !std::getenv("PS2PORT_PAD_STICKY") || std::atoi(std::getenv("PS2PORT_PAD_STICKY")) != 0;
+    if (sticky)
+        g_latched.fetch_or(buttons & ~g_prevButtons, std::memory_order_acq_rel);
+    g_prevButtons = buttons;
     g_buttons.store(buttons, std::memory_order_release);
 
     // quit combination, held for a second
@@ -268,7 +276,15 @@ bool IsGamepadButtonDown(int gamepad, int button)
 {
     if (gamepad != 0 || button < 0 || button >= 32)
         return false;
-    return (g_buttons.load(std::memory_order_acquire) >> button) & 1u;
+    const uint32_t down = g_buttons.load(std::memory_order_acquire) | g_latched.load(std::memory_order_acquire) |
+                          g_latchedOld.load(std::memory_order_acquire);
+    return (down >> button) & 1u;
+}
+
+// After a game read of port 0 (ps2_pad.cpp): latched presses have now been seen once; they stay for one more read, then go
+void ps2portPadConsumed()
+{
+    g_latchedOld.store(g_latched.exchange(0u, std::memory_order_acq_rel), std::memory_order_release);
 }
 
 // -1..1 with a dead zone of 12 % (the sticks rest a little off centre), rescaled so the edge of the zone reads 0

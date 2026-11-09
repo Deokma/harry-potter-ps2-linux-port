@@ -78,7 +78,107 @@ namespace
     std::atomic<int64_t> g_frameMaxNs{0};
     int64_t g_lastMarkNs = 0;
     const int64_t g_processStartNs = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+
+    std::atomic<uint16_t> g_scriptButtons{0}; // PAD_* bits the state-driven script holds (ps2_pad.cpp asks)
+    std::atomic<bool> g_shotRequest{false};   // a screenshot at the next presented frame (PS2PORT_FRAME_DIR)
+
+    // PS2PORT_PAD_SEQ=VALUE:BUTTON[:SETTLE],...: a test script driven by the game's state, counted in game frames. Step by step: wait
+    // until the guest word PS2PORT_PAD_SEQ_WORD (default 0x38c194, the play mode) has VALUE (hex, or * for any) for SETTLE frames
+    // (default 10), take a screenshot, press BUTTON for 3 frames, release for 5, go on. "[padseq]" lines report each step.
+    void padSequence(const uint8_t *rdram, double seconds)
+    {
+        struct Step
+        {
+            bool any;
+            uint32_t value;
+            uint16_t mask;
+            int settle;
+            std::string name;
+        };
+        static std::vector<Step> steps;
+        static uint32_t word = 0x38c194u;
+        static bool parsed = false;
+        static size_t at = 0;
+        static int phase = 0, count = 0, tail = -1;
+        if (!parsed)
+        {
+            parsed = true;
+            const char *env = std::getenv("PS2PORT_PAD_SEQ");
+            if (!env)
+                return;
+            if (const char *w = std::getenv("PS2PORT_PAD_SEQ_WORD"))
+                word = static_cast<uint32_t>(std::strtoul(w, nullptr, 0));
+            static const struct { const char *name; uint16_t mask; } names[] = {
+                {"LEFT", 0x0080}, {"DOWN", 0x0040}, {"RIGHT", 0x0020}, {"UP", 0x0010}, {"START", 0x0008}, {"R3", 0x0004},
+                {"L3", 0x0002}, {"SELECT", 0x0001}, {"SQUARE", 0x8000}, {"CROSS", 0x4000}, {"CIRCLE", 0x2000},
+                {"TRIANGLE", 0x1000}, {"R1", 0x0800}, {"L1", 0x0400}, {"R2", 0x0200}, {"L2", 0x0100}};
+            std::string s(env);
+            size_t p = 0;
+            while (p < s.size())
+            {
+                size_t e = s.find(',', p);
+                if (e == std::string::npos)
+                    e = s.size();
+                const std::string item = s.substr(p, e - p);
+                p = e + 1;
+                char value[16] = {}, button[16] = {};
+                int settle = 10;
+                if (std::sscanf(item.c_str(), "%15[^:]:%15[A-Z0-9]:%d", value, button, &settle) < 2)
+                    continue;
+                Step st{value[0] == '*', static_cast<uint32_t>(std::strtoul(value, nullptr, 16)), 0, settle, button};
+                for (const auto &n : names)
+                    if (st.name == n.name)
+                        st.mask = n.mask;
+                if (st.mask)
+                    steps.push_back(st);
+            }
+            std::fprintf(stderr, "[padseq] %zu steps on word %#x\n", steps.size(), word);
+        }
+        if (!rdram)
+            return;
+        if (at >= steps.size())
+        {
+            // a last screenshot once the final step has had time to show its result
+            if (tail >= 0 && ++tail == 30)
+            {
+                g_shotRequest.store(true);
+                std::fprintf(stderr, "[padseq] done at %.1f s\n", seconds);
+                tail = -1;
+            }
+            return;
+        }
+        Step &st = steps[at];
+        uint32_t v;
+        std::memcpy(&v, rdram + (word & 0x1FFFFFCu), 4);
+        if (phase == 0)
+        {
+            count = (st.any || v == st.value) ? count + 1 : 0;
+            if (count >= st.settle)
+            {
+                std::fprintf(stderr, "[padseq] step %zu: %s at %.1f s (word %x)\n", at, st.name.c_str(), seconds, v);
+                g_shotRequest.store(true);
+                g_scriptButtons.store(st.mask);
+                phase = 1;
+                count = 0;
+            }
+        }
+        else if (phase == 1 && ++count >= 3)
+        {
+            g_scriptButtons.store(0);
+            phase = 2;
+            count = 0;
+        }
+        else if (phase == 2 && ++count >= 5)
+        {
+            phase = 0;
+            count = 0;
+            if (++at >= steps.size())
+                tail = 0;
+        }
+    }
 }
+
+uint16_t ps2portScriptButtons() { return g_scriptButtons.load(std::memory_order_relaxed); }
 
 void ps2portDrawThrottle(); // ps2_memory.cpp (private runtime)
 
@@ -190,6 +290,7 @@ void ps2portPollFailed(uint32_t returnAddress, const uint8_t *rdram)
             watchLast = cur;
         }
     }
+    padSequence(rdram, (now - g_processStartNs) / 1e9);
     g_lastMarkNs = now;
     g_frameMarks.fetch_add(1, std::memory_order_relaxed);
 }
@@ -447,7 +548,7 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
     last = tick;
     ++shown;
 
-    const bool shot = frameDir && frameEvery != 0u && shown % frameEvery == 0u;
+    const bool shot = frameDir && ((frameEvery != 0u && shown % frameEvery == 0u) || g_shotRequest.exchange(false));
     if (shot)
         g_gles->setCaptureNextPresent(true);
     const double t0 = nowMs();
