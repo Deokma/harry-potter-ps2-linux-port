@@ -27,6 +27,20 @@ Phase reports live in `docs/PHASE_N.md`.
   plateaued at 83-87 C from a warm start. **Next:** the user's clean play test with build `5a9eec8d` (alone on the device),
   then thermal runs at 1.2/1.0 GHz (`scratchpad` chain script: copy logic from PHASE_8 "Thermal run 1"), then the
   architecture decision. Proposed: sticky pad presses (a press held until the game has read it) for low-fps menus.
+- **User's clean play test (`play-140201`, build `5a9eec8d`, alone on the device, ~5 min):** no `bad_alloc`, no hang, no
+  missing target, but **textures still wrong in Ollivanders and parts of the HUD missing** (user: "all the same"; photo of
+  the shelves with garish green and noise, a stray diagonal line), so it is a real GS/GLES bug, not the double run.
+  **Start reached the game** (`[pad] buttons: start` at 7350.8 s) but no pause menu opened: either the game's control set
+  maps pause to another slot (`0x3956b0`: index 0 in set 0, 4 in set 1; `*0x395728 & 1` changes the table) or pausing is
+  blocked there (`0x250998` needs `0x1acf58()` == 0). **User's direction (2026-11-09): finish porting to the end, starting
+  with what the player sees: textures, HUD, menus.**
+- **Next session, in order:** (1) textures in Ollivanders: needs a PCSX2 reference of that scene from the user (Shift+F8
+  single-frame and Ctrl+Shift+F8 multi-frame GS dumps plus a savestate, `docs/MEASURE_RUNBOOK.md` steps; existing
+  snapshots F01 I01 N01-N03 PILOT have no Ollivanders), then gsplay CPU vs GLES vs PCSX2 frame by frame; also panel
+  screenshots from a scripted run at 250-300 s (`device_panel.sh` PANEL_AT); (2) pause menu: on the PC with a scripted START
+  in the shop, log mode word `0x38c194`, `0x3956b0`, `*0x395728`, `0x1acf58()`; (3) saves once the menu opens; (4) movies
+  (end of stream from the game's own stream state, drop the `0x171904` write); (5) thermal runs at 1.2/1.0 GHz with the
+  fixed guard; (6) sticky pad presses for low-fps menus.
 
 **Goal now (user, 2026-11-06):** a thin slice to the title screen on the RG40XX H with
 real GLES picture, audio and input stubbed, no gameplay. No more scene measuring. Plan and
