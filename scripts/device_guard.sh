@@ -38,13 +38,14 @@ sleep 1
 echo "clock $(cat $cpu/scaling_cur_freq) kHz (governor $(cat $cpu/scaling_governor))"
 
 # In a process group of its own, so that a stop reaches every process the command started: killing the shell alone
-# left the runner going (Phase 7 soak). TERM first (SDL turns it into a quit), KILL 3 s later.
+# left the runner going (Phase 7 soak). TERM first (SDL turns it into a quit), KILL 3 s later. No "--" in kill: the
+# device's sh is dash, whose kill rejects it ("Illegal number: -"), so the stop silently did nothing (found 2026-11-09).
 setsid timeout "$seconds" "$@" &
 pid=$!
 stopgroup() {
-    kill -TERM -- "-$pid" 2>/dev/null
+    kill -TERM "-$pid" 2>/dev/null
     sleep 3
-    kill -KILL -- "-$pid" 2>/dev/null
+    kill -KILL "-$pid" 2>/dev/null
 }
 peak=$start
 stopped=0
@@ -61,7 +62,7 @@ done
 wait "$pid"
 status=$?
 # whatever outlived the command (timeout stops only its own child)
-kill -KILL -- "-$pid" 2>/dev/null
+kill -KILL "-$pid" 2>/dev/null
 
 echo "clock after $(cat $cpu/scaling_cur_freq) kHz"
 echo "$old_max" > $cpu/scaling_max_freq
