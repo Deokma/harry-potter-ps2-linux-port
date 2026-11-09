@@ -111,6 +111,82 @@ void ps2portPollFailed(uint32_t returnAddress, const uint8_t *rdram)
         }
         std::fprintf(frameLog, "%.1f %.2f %u %u\n", (now - g_processStartNs) / 1e6, (now - g_lastMarkNs) / 1e6, vblanks, last);
     }
+    // PS2PORT_WATCH=ITEM,ITEM,...: guest words printed ("[watch]" on stderr) at a game frame's end whenever one changes.
+    // ITEM is 0xADDR (the word there), *0xADDR or *0xADDR+0xOFF (the word at the pointer stored at ADDR, plus OFF), or btn:
+    // a mask of the game's button actions whose "pressed" halfword is set (table *(*0x38c130 + 0x10), 0x18 bytes an entry,
+    // halfword at +0x10, entries 0-31; the pause check 0x250998 reads entry *0x3956b0).
+    static std::vector<std::pair<int, std::pair<uint32_t, uint32_t>>> watch; // kind (0 word, 1 pointer, 2 btn), address, offset
+    static bool watchParsed = false;
+    static std::vector<uint32_t> watchLast;
+    if (!watchParsed)
+    {
+        watchParsed = true;
+        if (const char *w = std::getenv("PS2PORT_WATCH"))
+        {
+            std::string s(w);
+            size_t p = 0;
+            while (p <= s.size())
+            {
+                size_t e = s.find(',', p);
+                if (e == std::string::npos)
+                    e = s.size();
+                std::string item = s.substr(p, e - p);
+                if (item == "btn")
+                    watch.push_back({2, {0, 0}});
+                else if (!item.empty())
+                {
+                    const bool ptr = item[0] == '*';
+                    const std::string body = ptr ? item.substr(1) : item;
+                    const size_t plus = body.find('+');
+                    const uint32_t addr = static_cast<uint32_t>(std::strtoul(body.substr(0, plus).c_str(), nullptr, 0));
+                    const uint32_t off = plus == std::string::npos ? 0 : static_cast<uint32_t>(std::strtoul(body.substr(plus + 1).c_str(), nullptr, 0));
+                    watch.push_back({ptr ? 1 : 0, {addr, off}});
+                }
+                p = e + 1;
+            }
+            watchLast.assign(watch.size(), 0xDEADBEEFu);
+            std::fprintf(stderr, "[watch] %s\n", w);
+        }
+    }
+    if (!watch.empty() && rdram)
+    {
+        auto rd32 = [rdram](uint32_t a) -> uint32_t {
+            a &= 0x1FFFFFFCu;
+            if (a >= 0x2000000u)
+                return 0xFFFFFFFFu;
+            uint32_t v;
+            std::memcpy(&v, rdram + a, 4);
+            return v;
+        };
+        bool changed = false;
+        std::vector<uint32_t> cur(watch.size());
+        for (size_t i = 0; i < watch.size(); ++i)
+        {
+            const auto &it = watch[i];
+            if (it.first == 0)
+                cur[i] = rd32(it.second.first);
+            else if (it.first == 1)
+                cur[i] = rd32(rd32(it.second.first) + it.second.second);
+            else
+            {
+                const uint32_t base = rd32(rd32(0x38c130u) + 0x10u);
+                uint32_t mask = 0;
+                for (uint32_t k = 0; k < 32 && base != 0 && base < 0x2000000u; ++k)
+                    if ((rd32(base + k * 0x18u + 0x10u) & 0xFFFFu) != 0)
+                        mask |= 1u << k;
+                cur[i] = mask;
+            }
+            changed |= cur[i] != watchLast[i];
+        }
+        if (changed)
+        {
+            std::fprintf(stderr, "[watch] %.1f f%llu", (now - g_processStartNs) / 1e9, static_cast<unsigned long long>(g_frameMarks.load(std::memory_order_relaxed)));
+            for (uint32_t v : cur)
+                std::fprintf(stderr, " %x", v);
+            std::fputc('\n', stderr);
+            watchLast = cur;
+        }
+    }
     g_lastMarkNs = now;
     g_frameMarks.fetch_add(1, std::memory_order_relaxed);
 }

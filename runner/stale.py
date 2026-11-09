@@ -13,7 +13,8 @@ include = re.compile(r'#include "(.*)"')
 for folder in sys.argv[1:]:
     rebuilt = 0
     for lst in sorted(Path(folder).glob("list_*.cpp")):
-        lines = lst.read_text().splitlines()
+        # a batch whose files are all gone is left holding one empty line
+        lines = [l for l in lst.read_text().splitlines() if l.strip()]
         kept = [l for l in lines if os.path.exists(include.match(l).group(1))]
         obj = lst.with_suffix(".o")
         stale = len(kept) != len(lines)
