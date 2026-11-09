@@ -39,7 +39,7 @@ if [ "$(cat "$out/ffmpeg.txt" 2>/dev/null)" != "$ffmpeg" ]; then
     rm -f "$out/lib/kernel_Stubs_MPEG.o"
     echo "$ffmpeg" > "$out/ffmpeg.txt"
 fi
-common="-std=c++20 -ffp-contract=off -fno-math-errno -w $arch $ffmpeg-DPS2X_ENABLE_IOP_RPC_TRACE=1 -I$src/host -I$rt/include -I$rt/src/lib -I$rt/src/lib/Kernel -I$iop/include -I$iop/src -I$src/../eegen -I$src/../vu1 -I$gen"
+common="-std=c++20 -ffp-contract=off -fno-math-errno -w $arch $ffmpeg -DPS2X_ENABLE_IOP_RPC_TRACE=1 -I$src/host -I$rt/include -I$rt/src/lib -I$rt/src/lib/Kernel -I$iop/include -I$iop/src -I$src/../eegen -I$src/../vu1 -I$gen"
 
 rm -f "$out/jobs.txt"
 # job FLAGS SOURCE OBJECT: compile if the object is missing or older

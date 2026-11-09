@@ -28,6 +28,16 @@ right on the device, and the parts the runtime only stubs.
 - **Not checked: writing a save.** Where the game saves is not known yet; Start in the Ollivanders gameplay (`panel-141136`, 240 s)
   showed no pause menu within 10 s. At boot the game asks the card for its info three times (0) and changes to its folder (-4,
   not there yet). `PS2PORT_MC_LOG=1` prints every card command and its result (runtime patch).
+- **Where the game saves (2026-11-09, static reading of the Ghidra decompile, not run yet):** the card writes (sceMcOpen
+  modes 0x202/0x203 in `0x2da118`/`0x2daaf0`) are driven by the card screen state machine `0x264a20`, which has two front
+  ends: the main menu's (`0x1b7278`) and an in-game one (`0x286fc8`). In-game, `0x251610` switches on a mode word at
+  `0x38c194`; **mode 6 is the save screen** (`0x250e80` -> `0x286f60`), entered through `0x286f18` from two places:
+  1. **the pause menu** (mode 3, `0x26c7f0`): its item index 1 opens the save screen (index 0 goes to mode 10, index 2
+     toggles an option). Mode 3 is opened by `0x250998` when the pause button is pressed and `0x1acf58()` is 0; in control
+     set 0 a flag (`*0x395728 & 1`) changes the button table, which may be why Start did nothing in Ollivanders;
+  2. **a save-point object in the world** (`0x160980`): within 200 units (or facing it) the game shows context icon 0x1a,
+     and the action button (button index at `0x39569c`) opens the save screen.
+  Button indices are the game's own enumeration (`0x3956xx`, set in `0x2631b8`'s neighbour around `0x263xxx`), not pad bits.
 - The user's PCSX2 cards (`D:\ps2port-data\memcards`): `Mcd001.ps2` formatted and empty, `Mcd002.ps2` not formatted. No saves to
   borrow. `scripts/mc_extract.py` lists and copies saves from a PCSX2 card image into an `mc0` folder, for when there are some.
 
@@ -92,3 +102,32 @@ swscale to RGBA). Today the port stubs the movie functions (`runner/gen.sh` skip
 Plan: a minimal static FFmpeg 7.1 (`scripts/ffmpeg_build.sh`; the source downloaded from ffmpeg.org, its signature checked
 against FFmpeg's release key), `PS2X_HAS_FFMPEG=1`, the skip list emptied, tested on the PC first. **Waiting for the user's OK
 to build FFmpeg from that source** (the tool's permission check stopped it: code from an external download).
+
+## Thermal facts (2026-11-09, read from sysfs on the device, measured)
+
+- `cpu_thermal_zone`: power_allocator, trips **60 C passive, 70 C passive, 115 C critical** (hysteresis 0); cooling devices
+  `thermal-cpufreq-0` and `thermal-devfreq-0` (GPU), 8 states each, both on trip 1 (70 C), weight 1024;
+  sustainable_power 1000 mW, k_po 20, k_pu 40, k_i 0. GPU, VE, DDR zones: no trips. Battery zone separate (AXP2202).
+- No fan. cpufreq: schedutil, 480-1704 MHz available (480, 792, 1008, 1200, 1320, 1416, 1512, 1600, 1704), scaling_max
+  1512 MHz by default; GPU devfreq simple_ondemand 240-648 MHz.
+
+### Movies, first PC test (2026-11-09): hangs at the first movie (measured), stopped by the item's call budget
+
+- `runner/build.sh` had a missing space (`$ffmpeg-DPS2X_ENABLE_IOP_RPC_TRACE=1`): FFmpeg's include path was glued to the
+  next flag, so `MPEG.cpp` failed to compile and the link failed. Fixed; the x86 runner links with FFmpeg.
+- **PC boot, 80 s (`boot-20261109-120906`):** language screen at 5-8 s, then **black from 13.6 s to the end**; the EE stays at
+  pc 0x2ddf6c, the DMA count stops changing (nothing drawn). With the stub the boot went on to the menu.
+- **Why (reading the code; the exact blocking call is an inference):** the game opens its movies with
+  `0x2dd8e0(..., 1, 2, 2, ...)`, mode 2 = libmpeg (modes 0/1 would drive the IPU directly; the runtime has no IPU). Per frame
+  `0x2dc738` asks `0x2de0e0` (-> the game's own `sceMpegIsEnd` at `0x2fb220`, which reads `**(mp+0x40)`, not stubbed) and
+  decodes through `0x2dde48` -> `sceMpegGetPicture` (stub). PS2Recomp's stub `GetPicture` **waits** (`waitExternal`) while it has
+  no decoded frame and has not seen the CD stream's end; that end and the data counters come only from
+  `notifyMpegCdStream*`, which PS2Recomp's native `sceCdSt*` stubs call. **This game's streaming runs through the emulated
+  IOP, so those are never called**; and whether the game's data reaches `sceMpegDemuxPssRing` (directly or from a libmpeg
+  callback the stub records but may not call) is not checked yet.
+- Also found: the stub's `sceMpegReset` writes 0 to the fixed guest address `0x171904` (from another game): must go before
+  movies are turned on.
+- **Next (proposal):** a run with the stub's traces on (`AGRESSIVE_LOGS` for `MPEG.cpp` only) to see which libmpeg calls the
+  game makes and whether DemuxPssRing gets data; then either feed EOF from the game's own stream state (the IOP stream
+  driver's end, or `sceMpegIsEnd` semantics) and drop the `0x171904` write, or keep the stub. **Until then any new aarch64
+  build must use `PS2PORT_MOVIE_STUB=1`** (the device's current `runner-aarch64` predates the change and still plays).
