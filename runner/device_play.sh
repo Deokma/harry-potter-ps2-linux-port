@@ -3,6 +3,12 @@
 #   device_play.sh [VAR=VALUE...]
 # Quit: Menu + Start, or L1 + R1 + Select + Start, held for a second. Log and frame times in play-TIME/.
 cd "$(dirname "$0")" || exit 1
+# The GPU's devfreq governor (simple_ondemand) stays at 240 MHz under this load: raise the minimum to the maximum for the run and
+# put it back after (GPU_MIN_HZ=0 leaves it alone). At 240 MHz the load-game screen's fog took 58 ms of GPU a frame.
+gdev=/sys/class/devfreq/gpu
+gold=$(cat $gdev/min_freq 2>/dev/null)
+ghz=${GPU_MIN_HZ:-648000000}
+[ -n "$gold" ] && [ "$ghz" != 0 ] && { echo "$ghz" > $gdev/min_freq; trap 'echo "$gold" > $gdev/min_freq' EXIT; trap 'exit 143' TERM INT HUP; }
 d=play-$(date +%H%M%S)
 mkdir -p "$d"
 chmod +x runner-aarch64

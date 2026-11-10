@@ -103,6 +103,9 @@ private:
         bool indexed = false;
         size_t bytes = 0;
         uint32_t lastUsed = 0;
+        // indexed, up to kExpandTexels: the indices and the entry's content key, to expand it with a palette (resolveExpanded)
+        uint64_t contentKey = 0;
+        std::vector<uint8_t> indices;
     };
 
     // What a TEX0 address and format holds right now, as of pageSig.
@@ -211,7 +214,23 @@ private:
     {
         unsigned tex = 0;
         uint32_t lastUsed = 0;
+        uint64_t content = 0;
+        std::vector<uint32_t> palette;
     };
+    // An indexed texture with one palette as an RGBA texture, by both contents: a linearly filtered draw then takes one filtered
+    // fetch where the shader's own bilinear of palette lookups takes eight (the load-game screen's fog: 61 ms of GPU a frame, 21-27
+    // with one fetch, measured with gsplay on the device).
+    struct ExpandedEntry
+    {
+        unsigned tex = 0;
+        size_t bytes = 0;
+        uint32_t lastUsed = 0;
+    };
+    static constexpr size_t kExpandTexels = 256u * 256u;
+    std::unordered_map<uint64_t, ExpandedEntry> m_expanded;
+    size_t m_expandedBytes = 0;
+    ClutEntry *m_lastClut = nullptr; // what resolveClut last returned
+    unsigned resolveExpanded(TextureEntry &entry, const GSTex0Reg &tex0, const GSTexaReg &texa);
     std::unordered_map<uint64_t, ClutEntry> m_cluts;
     std::unordered_map<uint64_t, ClutEntry *> m_clutKeys;
     void evictCluts();

@@ -138,6 +138,8 @@ void ps2portPadInit()
 }
 
 // Main thread, every displayed vsync: SDL's events drained (they also update the controller), the state published.
+void ps2portRequestShot(); // display.cpp
+
 void ps2portPadPoll()
 {
     if (!sdl.PollEvent)
@@ -224,6 +226,17 @@ void ps2portPadPoll()
         axes |= static_cast<uint64_t>(static_cast<uint16_t>(a[i])) << (16 * i);
     }
     g_axes.store(axes, std::memory_order_relaxed);
+    // Screenshot: Menu + L1 (not with Start: Menu + Start quits), once per press. L1 does not reach the game while Menu is down.
+    {
+        static bool shotHeld = false;
+        const uint32_t menu = 1u << GAMEPAD_BUTTON_MIDDLE, l1 = 1u << GAMEPAD_BUTTON_LEFT_TRIGGER_1;
+        const bool shotNow = (buttons & menu) && (buttons & l1) && !(buttons & (1u << GAMEPAD_BUTTON_MIDDLE_RIGHT));
+        if (shotNow && !shotHeld)
+            ps2portRequestShot();
+        shotHeld = shotNow;
+        if (buttons & menu)
+            buttons &= ~l1;
+    }
     static const bool sticky = !std::getenv("PS2PORT_PAD_STICKY") || std::atoi(std::getenv("PS2PORT_PAD_STICKY")) != 0;
     if (sticky)
         g_latched.fetch_or(buttons & ~g_prevButtons, std::memory_order_acq_rel);

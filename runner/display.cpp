@@ -12,7 +12,10 @@
 #include "ps2_runtime.h"
 #include "runtime/ee_scheduler.h"
 
+#include "host/png_write.h"
+
 #include <dirent.h>
+#include <sys/stat.h>
 #include <dlfcn.h>
 #include <signal.h>
 #include <sys/syscall.h>
@@ -74,12 +77,15 @@ namespace
     // Game frames, exactly: the vsync wait at 0x2cd6a0 first drains its semaphore with PollSema until it fails, so one failed poll returning
     // to 0x2cd6c8 is one frame. How long each took, from one to the next, in buckets up to 33.4, 50, 100 ms and over.
     std::atomic<uint64_t> g_frameMarks{0};
+    std::atomic<uint64_t> g_frameTotal{0}; // game frames since the start (screenshot names)
+    std::atomic<bool> g_userShot{false};   // a screenshot asked for: Menu + L1 (pad_sdl.cpp), SIGUSR1, Enter on the PC, PS2PORT_SHOT_AT
     std::atomic<uint64_t> g_frameBuckets[4] = {};
     std::atomic<int64_t> g_frameMaxNs{0};
     int64_t g_lastMarkNs = 0;
     const int64_t g_processStartNs = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 
     std::atomic<uint16_t> g_scriptButtons{0}; // PAD_* bits the state-driven script holds (ps2_pad.cpp asks)
+    std::atomic<uint32_t> g_scriptStick{0};   // the same for the left stick: 0x10000 | y byte << 8 | x byte, 0 = the pad's own
     std::atomic<bool> g_shotRequest{false};   // a screenshot at the next presented frame (PS2PORT_FRAME_DIR)
 
     // PS2PORT_PAD_SEQ=VALUE:BUTTON[:SETTLE],...: a test script driven by the game's state, counted in game frames. Step by step: wait
@@ -94,6 +100,8 @@ namespace
             uint16_t mask;
             int settle;
             std::string name;
+            uint32_t stick = 0;
+            int hold = 3;
         };
         static std::vector<Step> steps;
         static uint32_t word = 0x38c194u;
@@ -122,14 +130,21 @@ namespace
                 const std::string item = s.substr(p, e - p);
                 p = e + 1;
                 char value[16] = {}, button[16] = {};
-                int settle = 10;
-                if (std::sscanf(item.c_str(), "%15[^:]:%15[A-Z0-9]:%d", value, button, &settle) < 2)
+                int settle = 10, hold = 3;
+                if (std::sscanf(item.c_str(), "%15[^:]:%15[A-Z0-9]:%d:%d", value, button, &settle, &hold) < 2)
                     continue;
                 Step st{value[0] == '*', static_cast<uint32_t>(std::strtoul(value, nullptr, 16)), 0, settle, button};
+                st.hold = hold;
                 for (const auto &n : names)
                     if (st.name == n.name)
                         st.mask = n.mask;
-                if (st.mask)
+                // the left stick pushed fully one way: LSLEFT, LSRIGHT, LSUP, LSDOWN (VALUE:NAME:SETTLE:HOLD, HOLD in game frames)
+                static const struct { const char *name; uint32_t stick; } sticks[] = {
+                    {"LSLEFT", 0x18000}, {"LSRIGHT", 0x180FF}, {"LSUP", 0x10080}, {"LSDOWN", 0x1FF80}};
+                for (const auto &n : sticks)
+                    if (st.name == n.name)
+                        st.stick = n.stick;
+                if (st.mask || st.stick)
                     steps.push_back(st);
             }
             std::fprintf(stderr, "[padseq] %zu steps on word %#x\n", steps.size(), word);
@@ -158,13 +173,16 @@ namespace
                 std::fprintf(stderr, "[padseq] step %zu: %s at %.1f s (word %x)\n", at, st.name.c_str(), seconds, v);
                 g_shotRequest.store(true);
                 g_scriptButtons.store(st.mask);
+                g_scriptStick.store(st.stick);
                 phase = 1;
                 count = 0;
             }
         }
-        else if (phase == 1 && ++count >= 3)
+        else if (phase == 1 && ++count >= st.hold)
         {
             g_scriptButtons.store(0);
+            g_scriptStick.store(0);
+            g_shotRequest.store(true);
             phase = 2;
             count = 0;
         }
@@ -179,6 +197,89 @@ namespace
 }
 
 uint16_t ps2portScriptButtons() { return g_scriptButtons.load(std::memory_order_relaxed); }
+
+// Screenshots for the user's visual checks (2026-11-10). Asked for by Menu + L1 on the device, by `kill -USR1 PID` anywhere, by
+// Enter in the terminal the PC runner was started from (it has no window and no keys), or at the seconds listed in
+// PS2PORT_SHOT_AT=T1,T2,... The main thread copies the frame it shows next (a few ms, once); a thread of its own writes
+// DIR/ps2port-m<game mode>-<uptime>s-f<game frame>.png, DIR being PS2PORT_SHOT_DIR, else /userdata/screenshots on the device and
+// private/screenshots on the PC. Never on the EE thread.
+void ps2portRequestShot() { g_userShot.store(true, std::memory_order_relaxed); }
+
+namespace
+{
+    void shotSignal(int) { g_userShot.store(true, std::memory_order_relaxed); }
+
+    const char *shotDir()
+    {
+        static const std::string dir = std::getenv("PS2PORT_SHOT_DIR") ? std::getenv("PS2PORT_SHOT_DIR")
+                                       : std::getenv("PS2PORT_DISPLAY") ? "/userdata/screenshots" : "private/screenshots";
+        return dir.c_str();
+    }
+
+    // main thread, every shown frame: true once per request
+    bool shotWanted(double seconds)
+    {
+        static std::vector<double> at;
+        static size_t next = 0;
+        static const bool ready = []()
+        {
+            struct sigaction sa = {};
+            sa.sa_handler = shotSignal;
+            sigaction(SIGUSR1, &sa, nullptr);
+            if (const char *env = std::getenv("PS2PORT_SHOT_AT"))
+                for (const char *p = env; *p;)
+                {
+                    char *end = nullptr;
+                    const double t = std::strtod(p, &end);
+                    if (end == p)
+                        break;
+                    at.push_back(t);
+                    p = *end ? end + 1 : end;
+                }
+            if (!std::getenv("PS2PORT_DISPLAY") && isatty(0))
+                std::thread([]()
+                            {
+                                for (int c; (c = std::getchar()) != EOF;)
+                                    if (c == '\n')
+                                        g_userShot.store(true, std::memory_order_relaxed);
+                            }).detach();
+            return true;
+        }();
+        (void)ready;
+        if (next < at.size() && seconds >= at[next])
+        {
+            ++next;
+            g_userShot.store(true, std::memory_order_relaxed);
+        }
+        return g_userShot.exchange(false, std::memory_order_relaxed);
+    }
+
+    void saveUserShot(std::vector<uint8_t> &&pixels, uint32_t w, uint32_t h, uint32_t mode, double seconds)
+    {
+        if (pixels.empty() || w == 0u || h == 0u)
+            return;
+        ::mkdir(shotDir(), 0755);
+        const unsigned long long frame = g_frameTotal.load(std::memory_order_relaxed);
+        char name[512];
+        std::snprintf(name, sizeof(name), "%s/ps2port-m%u-%05.0fs-f%llu.png", shotDir(), mode, seconds, frame);
+        std::fprintf(stderr, "[shot] frame %llu mode %u uptime %.1f s -> %s\n", frame, mode, seconds, name);
+        std::thread([p = std::move(pixels), w, h, path = std::string(name)]()
+                    {
+                        if (!ps2portpng::write(path.c_str(), p.data(), w, h, p.size() / h))
+                            std::fprintf(stderr, "[shot] cannot write %s\n", path.c_str());
+                    }).detach();
+    }
+}
+
+// The PC runner's present loop (ps2_runtime.cpp, no display of ours): whether to save the frame it shows, and the saving
+bool ps2portShotWanted(double seconds) { return shotWanted(seconds); }
+void ps2portSaveShot(const uint8_t *rgba, uint32_t w, uint32_t h, const uint8_t *rdram, double seconds)
+{
+    uint32_t mode = 0;
+    std::memcpy(&mode, rdram + 0x38c194u, 4);
+    saveUserShot(std::vector<uint8_t>(rgba, rgba + static_cast<size_t>(w) * h * 4u), w, h, mode, seconds);
+}
+uint32_t ps2portScriptStick() { return g_scriptStick.load(std::memory_order_relaxed); }
 
 void ps2portDrawThrottle(); // ps2_memory.cpp (private runtime)
 void ps2portFrameMark();    // the same: frame sync, the game's next BGCOLOR write is its flip
@@ -295,6 +396,7 @@ void ps2portPollFailed(uint32_t returnAddress, const uint8_t *rdram)
     padSequence(rdram, (now - g_processStartNs) / 1e9);
     g_lastMarkNs = now;
     g_frameMarks.fetch_add(1, std::memory_order_relaxed);
+    g_frameTotal.fetch_add(1, std::memory_order_relaxed);
 }
 
 namespace
@@ -578,7 +680,8 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
     ++shown;
 
     const bool shot = frameDir && ((frameEvery != 0u && shown % frameEvery == 0u) || g_shotRequest.exchange(false));
-    if (shot)
+    const bool userShot = shotWanted(std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count());
+    if (shot || userShot)
         g_gles->setCaptureNextPresent(true);
     const double t0 = nowMs();
     runtime.gs().latchHostPresentationFrame();
@@ -587,10 +690,17 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
     const double t1 = nowMs();
     const double seconds = std::chrono::duration<double>(std::chrono::steady_clock::now() - start).count();
     sampling(seconds);
-    if (shot)
-    {
+    if (shot || userShot)
         g_gles->setCaptureNextPresent(false);
+    if (shot)
         writeShot(runtime, frameDir, shown, seconds);
+    if (userShot)
+    {
+        std::vector<uint8_t> pixels;
+        uint32_t w = 0, h = 0, mode = 0;
+        std::memcpy(&mode, runtime.memory().getRDRAM() + 0x38c194u, 4);
+        if (runtime.gs().copyLatchedHostPresentationFrame(pixels, w, h))
+            saveUserShot(std::move(pixels), w, h, mode, seconds);
     }
     const double t2 = nowMs();
     gsplayGlSwap();

@@ -17,15 +17,21 @@ awk -F, 'NR > 1 { print $2 }' "$t/function_map.csv" > "$out/functions.txt"
     grep -l 'ps2_stubs::\|ps2_syscalls::' "$t"/out-b/FUN_*.cpp | sed -E 's/.*FUN_([0-9a-f]{8})_.*/0x\1/'
 } | awk '{ print $1 }' | sort -u > "$out/native.txt"
 
+# The movie stub is the default (2026-11-10: without it the runner stops in the first movie); PS2PORT_MOVIE_STUB=0 for the movie work.
 # Movies play since Phase 8 (FFmpeg in the libmpeg stand-in). PS2PORT_MOVIE_STUB=1: the old stub, which replaces these in
 # PS2Recomp's output (scripts/ps2recomp_movie_stub.py, run on trial/out-b and the runtime's runner folder too)
 skip=""
-[ "${PS2PORT_MOVIE_STUB:-0}" = 1 ] && skip=0x2dd8e0,0x2dc868,0x2dcc98,0x2de1e8,0x2dc738
+[ "${PS2PORT_MOVIE_STUB:-1}" = 1 ] && skip=0x2dd8e0,0x2dc868,0x2dcc98,0x2de1e8,0x2dc738
 floats="--no-float-groups"
 [ "${1:-}" = groups ] && floats=""
+# The R5900's own semantics where PS2Recomp's output differs (2026-11-10): sqrt.s takes ft (PS2Recomp read fs: 16 of the game's 35
+# square roots took the wrong register, among them the matrix-to-angles function at 0x2d9090), cvt.w.s truncates, branches compare
+# 64 bits, lq / sq mask the address. PS2PORT_PS2RECOMP_SEMANTICS=1: PS2Recomp's, as before (the replay harness's reference).
+semantics="--hardware-semantics-of ${PS2PORT_HW_SEMANTICS:-sqrt,cvt,branch,lqsq}"
+[ "${PS2PORT_PS2RECOMP_SEMANTICS:-0}" = 1 ] && semantics=""
 rm -rf "$out/eg.new"
 python3 -I eegen/eegen.py "$elf" "$t/function_map.csv" "$out/eg.new" --functions "$out/functions.txt" \
-    --ps2recomp-table "$t/out-b/register_functions.cpp" --native "$out/native.txt" --skip "$skip" $floats --runtime-count --checkpoints \
+    --ps2recomp-table "$t/out-b/register_functions.cpp" --native "$out/native.txt" --skip "$skip" $floats $semantics --runtime-count --checkpoints \
     --borrow "$t/out-b" | tail -4 | cut -c1-240
 # keeps unchanged files' times, so that the build recompiles only the batches that changed
 rsync -rc --delete "$out/eg.new/" "$out/eg/"

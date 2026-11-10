@@ -42,6 +42,20 @@ Phase reports live in `docs/PHASE_N.md`.
   (end of stream from the game's own stream state, drop the `0x171904` write); (5) thermal runs at 1.2/1.0 GHz with the
   fixed guard; (6) sticky pad presses for low-fps menus.
 
+**2026-11-10 (later): stick fix, fog cost, GPU clock, screenshots; visual checks are the user's.** Details `docs/PHASE_8.md`,
+"Stick, heat stop, fog cost, screenshots". (1) The user's "crash" at the wand was the 85 C guard (`play-012555`, 318 s). (2) Stick:
+16 of 35 `sqrt.s` read the wrong register under PS2Recomp's semantics; `runner/gen.sh` now uses the R5900's own
+(`--hardware-semantics-of sqrt,cvt,branch,lqsq`) and **defaults to the movie stub** (without it the runner stops in the first
+movie). Scripted check: left/right pushes change 82 % of the picture, control 0.6 %; the user's test decides. (3) Load-game
+screen's fog: palette textures expanded to RGBA for linear draws, 61 -> 21.6 ms of GPU a frame (gsplay), about 44 flips a second
+in the game (was 16). (4) Game runs raise the GPU clock to 648 MHz (`GPU_MIN_HZ=0` off). (5) Screenshots: Menu + L1 on the device
+-> `/userdata/screenshots/ps2port-*.png`, `sh scripts/shots_fetch.sh` copies them to `private/screenshots/device/`;
+`docs/VISUAL_CHECKLIST.md` (template, slice 1 list); `scripts/png_stats.py` for numbers. **Rule (user): the assistant does not
+open screenshots unless a numeric check flags something or the user asks; visual comparisons are listed for the user.** Play
+binary `e245057a`. The user presses buttons on the device during test runs: state-driven routes then go astray; check
+`PS2PORT_PAD_LOG=1` before trusting a route. Route that works untouched: `PS2PORT_PAD="CROSS@5+0.3"` and
+`PS2PORT_PAD_SEQ=9:START:60,2:DOWN:60,2:CROSS:40,2:CROSS:300,2:UP:40,2:CROSS:20` (language, skip narration, Continue, slot, Yes).
+
 **2026-11-10: input lag fixed at its cause, frame sync (user: "very significant input lag ... the menu lags a lot when there's
 fog").** The game could run up to 16 MB of drawing (about 5 s in the fog menu) ahead of the screen; now at most one frame
 (`docs/PHASE_8.md`, "Input lag"). Fog menu: one screen update per ~5 s -> 14-15 a second; shop frame rate unchanged; Continue

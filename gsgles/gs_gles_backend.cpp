@@ -982,6 +982,9 @@ GSGlesBackend::TextureEntry *GSGlesBackend::resolveTexture(const GSDrawState &st
     entry.indexed = indexed;
     entry.bytes = bytes;
     entry.lastUsed = m_frameIndex;
+    entry.contentKey = contentKey;
+    if (indexed && bytes <= kExpandTexels)
+        entry.indices.assign(m_decode.begin(), m_decode.begin() + bytes);
     m_textureBytes += bytes;
     slot.current = &entry;
     ++m_stats.texUploads;
@@ -990,9 +993,54 @@ GSGlesBackend::TextureEntry *GSGlesBackend::resolveTexture(const GSDrawState &st
     return &entry;
 }
 
+unsigned GSGlesBackend::resolveExpanded(TextureEntry &entry, const GSTex0Reg &tex0, const GSTexaReg &texa)
+{
+    resolveClut(tex0, texa);
+    const ClutEntry *clut = m_lastClut;
+    if (!clut || clut->palette.empty() || entry.indices.empty())
+        return 0u;
+    const uint64_t key = (entry.contentKey * 0x9E3779B97F4A7C15ull) ^ (clut->content * 0xC2B2AE3D27D4EB4Full);
+    auto it = m_expanded.find(key);
+    if (it != m_expanded.end())
+    {
+        it->second.lastUsed = m_frameIndex;
+        return it->second.tex;
+    }
+    std::vector<uint32_t> pixels(entry.indices.size());
+    for (size_t i = 0; i < pixels.size(); ++i)
+        pixels[i] = clut->palette[entry.indices[i]];
+    ExpandedEntry &expanded = m_expanded[key];
+    expanded.tex = takeName(m_texNames, "texture");
+    expanded.bytes = pixels.size() * 4u;
+    expanded.lastUsed = m_frameIndex;
+    m_expandedBytes += expanded.bytes;
+    pushOp([tex = expanded.tex, w = entry.w, h = entry.h, pixels = std::move(pixels)]()
+           {
+               glActiveTexture(GL_TEXTURE0);
+               glBindTexture(GL_TEXTURE_2D, tex);
+               glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+           });
+    return expanded.tex;
+}
+
 // Old textures go when the cache is over budget, between frames, when nothing recorded refers to them.
 void GSGlesBackend::evictTextures()
 {
+    constexpr size_t kExpandedBudget = 24u * 1024u * 1024u;
+    if (m_expandedBytes > kExpandedBudget)
+    {
+        for (auto it = m_expanded.begin(); it != m_expanded.end();)
+        {
+            if (m_frameIndex - it->second.lastUsed > 120u)
+            {
+                pushOp([tex = it->second.tex]() { glDeleteTextures(1, &tex); });
+                m_expandedBytes -= it->second.bytes;
+                it = m_expanded.erase(it);
+            }
+            else
+                ++it;
+        }
+    }
     constexpr size_t kBudget = 96u * 1024u * 1024u;
     if (m_textureBytes <= kBudget)
         return;
@@ -1044,6 +1092,7 @@ unsigned GSGlesBackend::resolveClut(const GSTex0Reg &tex0, const GSTexaReg &texa
     if (it != m_clutKeys.end())
     {
         it->second->lastUsed = m_frameIndex;
+        m_lastClut = it->second;
         return it->second->tex;
     }
 
@@ -1066,11 +1115,14 @@ unsigned GSGlesBackend::resolveClut(const GSTex0Reg &tex0, const GSTexaReg &texa
     ClutEntry &entry = placed.first->second;
     entry.lastUsed = m_frameIndex;
     m_clutKeys[key] = &entry;
+    m_lastClut = &entry;
     if (!placed.second)
         return entry.tex;
 
     const unsigned tex = takeName(m_texNames, "texture");
     entry.tex = tex;
+    entry.content = content;
+    entry.palette = palette;
     pushOp([tex, palette = std::move(palette)]()
            {
                glActiveTexture(GL_TEXTURE1);
@@ -1271,14 +1323,25 @@ void GSGlesBackend::beginRun(const GSDrawState &state)
             cmd.tex = entry->tex;
             cmd.texSize[0] = texW;
             cmd.texSize[1] = texH;
-            if (entry->indexed)
+            // GSGLES_PAL_EXPAND=0: the shader's own bilinear of palette lookups, as before
+            static const bool expand = !std::getenv("GSGLES_PAL_EXPAND") || std::atoi(std::getenv("GSGLES_PAL_EXPAND")) != 0;
+            unsigned expanded = 0u;
+            if (entry->indexed && state.linearFilter && expand)
+                expanded = resolveExpanded(*entry, t, state.texa);
+            if (expanded != 0u)
+            {
+                cmd.tex = expanded;
+                cmd.sampler = getSampler(filter, wrapS, wrapT);
+            }
+            else if (entry->indexed)
             {
                 key |= kPal;
                 if (state.linearFilter)
                     key |= kLinear;
                 cmd.clut = resolveClut(t, state.texa);
             }
-            cmd.sampler = getSampler(entry->indexed ? GL_NEAREST : filter, wrapS, wrapT);
+            if (expanded == 0u)
+                cmd.sampler = getSampler(entry->indexed ? GL_NEAREST : filter, wrapS, wrapT);
         }
     }
 

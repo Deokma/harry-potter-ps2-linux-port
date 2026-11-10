@@ -342,7 +342,7 @@ def translate(addr, w, hw):
 
     if op == 1:
         # PS2Recomp compares the low 32 bits; the hardware the whole register
-        val = s64(rs) if hw else s32(rs)
+        val = s64(rs) if "branch" in hw else s32(rs)
         regimm = {0: ("bltz", "<", False), 1: ("bgez", ">=", False), 2: ("bltzl", "<", True), 3: ("bgezl", ">=", True)}
         if rt in regimm:
             mn, o, likely = regimm[rt]
@@ -368,7 +368,7 @@ def translate(addr, w, hw):
     if op in (6, 7, 0x16, 0x17):
         mn = {6: "blez", 7: "bgtz", 0x16: "blezl", 0x17: "bgtzl"}[op]
         o = "<=" if op in (6, 0x16) else ">"
-        val = s64(rs) if hw else s32(rs)
+        val = s64(rs) if "branch" in hw else s32(rs)
         return branch(mn, f"{val} {o} 0", gpr(rs), op >= 0x16)
 
     if op == 9:
@@ -426,7 +426,7 @@ def translate(addr, w, hw):
                 return op_("div.s", f"if (f{ft} == 0.0f) ctx->fcr31 |= 0x100000u; f{fd} = ps2_fdiv(f{fs}, f{ft});",
                            fpr(fs, ft), fpr(fd))
             if fn == 4:
-                src = ft if hw else fs  # PS2Recomp reads fs
+                src = ft if "sqrt" in hw else fs  # PS2Recomp reads fs
                 return op_("sqrt.s", f"f{fd} = ps2_fsqrt(f{src});", fpr(src), fpr(fd))
             if fn == 5:
                 return op_("abs.s", f"f{fd} = fabsf(f{fs});", fpr(fs), fpr(fd))
@@ -441,7 +441,7 @@ def translate(addr, w, hw):
                 mn, f = acc[fn]
                 return op_(mn, f"ctx->f_acc = {f}(f{fs}, f{ft});", fpr(fs, ft))
             if fn == 0x24:
-                cvt = f"eg_cvt_w_s(f{fs})" if hw else f"(uint32_t)(int32_t)nearbyintf(f{fs})"
+                cvt = f"eg_cvt_w_s(f{fs})" if "cvt" in hw else f"(uint32_t)(int32_t)nearbyintf(f{fs})"
                 return op_("cvt.w.s", f"f{fd} = eg_fbits({cvt});", fpr(fs), fpr(fd))
             if fn == 0x30:
                 return op_("c.f.s", "ctx->fcr31 &= ~0x800000u;")
@@ -466,7 +466,7 @@ def translate(addr, w, hw):
             return b
         raise Unsupported(f"mmi 0x{fn:02x}")
 
-    lq_ea = f"({ea} & ~15u)" if hw else ea  # PS2Recomp keeps the low bits
+    lq_ea = f"({ea} & ~15u)" if "lqsq" in hw else ea  # PS2Recomp keeps the low bits
     if op == 0x1E:
         call = f"eg_lq(rdram, ctx, runtime, {lq_ea}, {rt})"
         return op_("lq", f"r{rt} = {call};" if rt else f"(void){call};", gpr(rs), gpr(rt))
@@ -619,7 +619,9 @@ class Program:
             for line in Path(args.native).read_text().splitlines():
                 if line.strip():
                     self.native.add(int(line.split()[0], 16))
-        self.hw = args.hardware_semantics
+        # which of the R5900's own semantics to use where PS2Recomp's differ: a set of sqrt, cvt, branch, lqsq
+        self.hw = frozenset(("sqrt", "cvt", "branch", "lqsq")) if args.hardware_semantics else frozenset(
+            x for x in args.hardware_semantics_of.split(",") if x)
         self.fp_groups = not args.no_float_groups
         self.ours = set()
 
@@ -1116,6 +1118,7 @@ def main():
     ap.add_argument("--native")
     ap.add_argument("--skip", default="")
     ap.add_argument("--hardware-semantics", action="store_true")
+    ap.add_argument("--hardware-semantics-of", default="", help="some of sqrt,cvt,branch,lqsq (comma-separated)")
     ap.add_argument("--no-float-groups", action="store_true")
     ap.add_argument("--runtime-count", action="store_true", help="read Count from the runtime (ps2portReadCount), not from the context")
     ap.add_argument("--checkpoints", action="store_true", help="loop checkpoints, which a whole game needs")

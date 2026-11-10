@@ -302,3 +302,52 @@ Device binary: the device's own `runner-aarch64` of 2026-11-08 14:45 (md5 `17acd
   about half speed at 67 ms frames), unchanged; (4) without a press the language screen stays (seen once, `panel-005713`):
   correct, but scripted runs need a Cross first; (5) the PC runner stops in the New Game intro at the second subtitle (no
   audio there), so the main menu cannot be reached on the PC by New Game's route.
+
+### Stick, heat stop, fog cost, screenshots (2026-11-10, measured on the device)
+
+- **User report:** the stick is odd (left/right only works while already moving up/down), and "the game crashed" when choosing
+  the wand.
+- **The "crash" was the heat guard:** `play-012555` ended with `THERMAL STOP: 85.0 C` after 318 s (start 63.4 C: the device was
+  warm from the test runs before it). Not a game crash. The 85 C stop stays (user).
+- **Stick: wrong square roots.** The pad layer delivers the stick correctly (the play log shows X at +/-32767 with Y at 0). The
+  game's code was translated with PS2Recomp's semantics, in which `sqrt.s` reads the register field `fs`; the R5900 reads `ft`.
+  **16 of the game's 35 `sqrt.s` took the wrong register** (they computed the root of `f0`), among them the matrix-to-angles
+  function at `0x2d9090` (`sqrt(m0^2 + m4^2)` became `|m4|`) and three vector lengths in `0x169628`. `runner/gen.sh` now
+  generates with the R5900's own semantics for all four known differences (`eegen --hardware-semantics-of sqrt,cvt,branch,lqsq`:
+  also `cvt.w.s` truncates instead of rounding to nearest, 810 sites; branches compare 64 bits; `lq`/`sq` mask the address).
+  `PS2PORT_HW_SEMANTICS=...` chooses a subset, `PS2PORT_PS2RECOMP_SEMANTICS=1` the old ones (the replay harness keeps those).
+- **Trap met on the way:** `runner/gen.sh` without `PS2PORT_MOVIE_STUB=1` builds a runner that stops in the first movie (the
+  open movie work); the stub is now the script's default (`PS2PORT_MOVIE_STUB=0` for the movie work).
+- **Check (`panel-152205`, scripted, numbers only):** new test presses `LSLEFT`/`LSRIGHT`/`LSUP`/`LSDOWN` in `PS2PORT_PAD_SEQ`
+  (`VALUE:NAME:SETTLE:HOLD`, the left stick fully one way for HOLD game frames). In Ollivanders, share of pixels that changed
+  between the screenshot at the start and at the end of each 45-frame push: control (R3) 0.6 %, **left 82.2 %, right 81.5 %**,
+  up 69.4 %, down 74.7 %. No run of the old build with the same script exists (it has no scripted stick), and the user pressed
+  buttons during this run too (8 presses in the log), so this shows that left and right alone now move the view, not a strict
+  before/after. Shop frame rate unchanged (14.9-17.9 game frames a second). **The user's own test decides.**
+- **Fog on the load-game screen:** a GS dump of it (`D:\ps2port-data\raw\fog-menu.gs`, 2 frames): 160 blended quads with a 64x64
+  8-bit texture, linear filter, about 27 screens of overdraw. Replayed with gsplay on the device: **61 ms of GPU a frame, the
+  same at 240, 420 and 648 MHz GPU clock**; with nearest sampling 27.5 ms; with one filtered fetch 21-27 ms. The cost was the
+  shader's own bilinear of palette lookups (8 fetches). Fix (`gsgles/gs_gles_backend.*`): indexed textures up to 256x256 drawn
+  with the linear filter are expanded with their palette into an RGBA texture (cache by both contents, 24 MB budget) and take
+  one filtered fetch. gsplay: **21.6 ms a frame at 648 MHz, 28 ms at 240 MHz**; picture against the old path: 32 of 686,587
+  bytes differ by more than 2 (max 16). A gameplay dump (`N02_1`): GPU 44.2 -> 35.4 ms per 4 frames, no byte differs by more
+  than 2. In the game (`panel-152205`): the load-game screen runs at about 44 flips a second (was 16). `GSGLES_PAL_EXPAND=0`
+  turns it off.
+- **GPU clock:** the devfreq governor stays at 240 MHz under load (known since Phase 4, never applied to game runs).
+  `runner/device_play.sh` and `runner/device_panel.sh` now raise the minimum to 648 MHz for the run and put it back
+  (`GPU_MIN_HZ=0` leaves it). `N02_1` on gsplay: GPU 89.4 ms at 240 MHz, 44.3 ms at 648 MHz. Its effect on heat is not measured.
+  New tool: `gsgles/device_gpuclock.sh` (one dump at several GPU clocks).
+- **Frame sync, second version, measured where it was missing:** load-game screen at 240 MHz and the old shader
+  (`panel-103207`): 16 flips a second, flip to replayed 54-57 ms, the game waits 54-57 ms a frame, no time-outs; shop: no waits.
+- **Screenshots for the user's visual checks** (division of labour, user 2026-11-10): Menu + L1 on the device, Enter / SIGUSR1 /
+  `PS2PORT_SHOT_AT` on the PC runner; `docs/VISUAL_CHECKLIST.md` has the how-to, the template and the list for chapter slice 1;
+  `scripts/shots_fetch.sh` copies them to `private/screenshots/device/`; `scripts/png_stats.py` gives hash, lit share and the
+  difference to a reference without opening a picture. The main thread copies the frame (once), a thread of its own writes the
+  PNG (`runner/host/png_write.h`, stored deflate, about 690 KB); nothing runs on the EE thread. Checked: by time and by signal on
+  the device (3 files, 512x447, 14.8-87.9 % lit) and by time on the PC (2 files). **The Menu + L1 press itself is not tested**
+  (nobody to press it in a test run). Knulli's Function + L1: see the checklist (not bound outside the frontend's emulators; its
+  command `knulli-screenshot` works while the runner owns the display).
+- Play binary `e245057a`. Open: the user's test of the stick, of the lag and of Menu + L1; heat (85 C in 5-13 minutes of play);
+  game speed; the opening narration needs Start to skip in scripted runs; `cvt.w.s` now truncates while float arithmetic still
+  rounds to nearest (the R5900 rounds toward zero): a value that the console computes as exactly N may come out a hair under
+  and truncate to N-1; nothing of the kind seen in boot, menus, load and the shop.
