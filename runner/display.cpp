@@ -283,6 +283,12 @@ uint32_t ps2portScriptStick() { return g_scriptStick.load(std::memory_order_rela
 
 void ps2portDrawThrottle(); // ps2_memory.cpp (private runtime)
 void ps2portFrameMark();    // the same: frame sync, the game's next BGCOLOR write is its flip
+void ps2portRealtimeHold(bool hold); // EeScheduler.cpp (private runtime)
+namespace ps2x::iop::detail // the private IOP: its thread follows real time except while the game loads; IOP cycles run ahead
+{
+    void ps2portIopRealtimeHold(bool hold) __attribute__((weak));
+    uint64_t ps2portIopRealtimeExtra() __attribute__((weak));
+}
 
 void ps2portPollFailed(uint32_t returnAddress, const uint8_t *rdram)
 {
@@ -291,6 +297,16 @@ void ps2portPollFailed(uint32_t returnAddress, const uint8_t *rdram)
     // the game waits for its vsync here: where it waits for the display too when the display is too far behind
     ps2portDrawThrottle();
     ps2portFrameMark();
+    {
+        // the real-time clock (PS2PORT_REALTIME=1) stands still while the game loads
+        uint32_t mode = 0;
+        std::memcpy(&mode, rdram + 0x38c194u, 4);
+        ps2portRealtimeHold(mode == 0u);
+        // the IOP may run ahead of the EE in play (2), pause (3), Remembrall (4) and hint boxes (5); not while the game loads (0),
+        // saves (6) or plays a cutscene (9), which stream from the disc with the IOP in step
+        if (ps2x::iop::detail::ps2portIopRealtimeHold)
+            ps2x::iop::detail::ps2portIopRealtimeHold(!(mode >= 2u && mode <= 5u));
+    }
     const int64_t now = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
     if (g_lastMarkNs != 0)
     {
@@ -828,11 +844,15 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
             double mixerRate = 0.0;
             uint64_t underruns = 0;
             ps2portAudioStats(mixerRate, underruns);
+            static uint64_t iopExtraBefore = 0;
+            const uint64_t iopExtra = ps2x::iop::detail::ps2portIopRealtimeExtra ? ps2x::iop::detail::ps2portIopRealtimeExtra() : 0u;
+            const double iopAheadMs = (iopExtra - iopExtraBefore) / 36864.0 / (span / 1000.0);
+            iopExtraBefore = iopExtra;
             std::fprintf(stderr, "[m5h] t=%.0f heap in use %.1f MB (main arena %.1f MB, mapped blocks %.1f MB in %d); stage B waited for a latch %llu times; "
-                                 "sound mixed at %.0f frames/s, output ran dry %llu times\n", seconds,
+                                 "sound mixed at %.0f frames/s, output ran dry %llu times; IOP ahead of the EE by %.0f ms a second\n", seconds,
                          (static_cast<unsigned>(mi.uordblks) + static_cast<unsigned>(mi.hblkhd)) / 1048576.0, static_cast<unsigned>(mi.arena) / 1048576.0,
                          static_cast<unsigned>(mi.hblkhd) / 1048576.0, mi.hblks, static_cast<unsigned long long>(ps2portGsThreadCounts(8)),
-                         mixerRate, static_cast<unsigned long long>(underruns));
+                         mixerRate, static_cast<unsigned long long>(underruns), iopAheadMs);
         }
         tickBefore = tick;
         std::fprintf(stderr, "[m5w] t=%.0f per s: VU0 %.0f gave up %.0f other %.0f; VU1 %.0f other %.0f; runs %.0f vertices %.0f passes %.0f rt switches %.0f tex uploads %.1f (%.2f MB) rt uploads %.1f feedback %.1f cluts %.1f; execute %.1f ms; %.0f targets, %.0f programs\n", seconds,

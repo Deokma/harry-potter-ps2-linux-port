@@ -7,7 +7,8 @@ core in the loop.
 - **Game:** NTSC-U `SLUS-20826` (primary), PAL `SLES-52055` (secondary).
 - **Target:** Anbernic RG40XX H running Knulli: Allwinner H700, 4 x Cortex-A53 at 1.416 GHz, Mali-G31 MP2, 1 GB RAM, 640x480.
 - **State:** work in progress. The game boots, plays its opening, loads and saves, and the first playable room runs on the
-  device at about 15-18 frames a second. See [docs/PROGRESS.md](docs/PROGRESS.md).
+  device at about 15-18 frames a second with the game world at full speed; sound still plays slow. See
+  [docs/PROGRESS.md](docs/PROGRESS.md).
 
 ## You need your own copy of the game
 
@@ -41,7 +42,9 @@ The build is developed on Windows with WSL (Ubuntu) and has several manual first
 3. `sh runner/gen.sh`: eegen and the vector unit generators write the game's code to `private/third_party/build-m2/gen/`.
 4. `sh runner/build.sh x86` or `sh runner/build.sh aarch64` (cross compiler `aarch64-linux-gnu-g++`).
 5. PC test: `sh runner/try.sh SECONDS PAD`. Device: `sh scripts/play.sh` from Git Bash (copies the binary over SSH and starts
-   the game on the panel; quit with Menu + Start, screenshot with Menu + L1).
+   the game on the panel; quit with Menu + Start, screenshot with Menu + L1), or the Knulli Ports launcher
+   (`sh scripts/install_port.sh`; not yet tried on the device). Details in [docs/RUNNING.md](docs/RUNNING.md); every switch in
+   [docs/ENV_VARS.md](docs/ENV_VARS.md).
 
 The patches to PS2Recomp are not in this repository yet (they sit next to the checkout in `private/`), so a fresh clone cannot
 complete step 2 today. Publishing them is on the list.

@@ -42,6 +42,17 @@ Phase reports live in `docs/PHASE_N.md`.
   (end of stream from the game's own stream state, drop the `0x171904` write); (5) thermal runs at 1.2/1.0 GHz with the
   fixed guard; (6) sticky pad presses for low-fps menus.
 
+**2026-11-10 (evening, no device access by the user's choice): game speed was misread; sound is the slow part; launcher and
+docs.** (1) The game's logic ticks on its own 25 Hz clock over COP0 Count, which the runtime serves from real time: 25.0 ticks a
+second measured in play on the device (`[m5m]`), so the world is at full speed; the old "73 % / half" came from a debug counter
+(0x3287F0). (2) Sound runs at the EE's pace (IOP and SPU on EE cycles): 24-28 k of 48 k samples a second. `PS2PORT_IOP_REALTIME=1`
+(IOP on real time, EE clock untouched) gives 45-47 k on the PC at half speed, but the stream library then makes loads crawl:
+**off by default**. (3) `runner/knulli/HarryPotterPS2.sh` + `scripts/install_port.sh` (Ports launcher; never run on the device),
+`docs/RUNNING.md`, `docs/ENV_VARS.md`, `docs/STATUS.md` rewritten, `docs/PROGRESS.md` corrected. (4) PC test speed:
+`DRAW=0/1 PS2PORT_PRESENT_EVERY=30` (title ~21 s, New Game load 7 s); `PS2PORT_SLOWDOWN=50` imitates the device. Tools:
+`scripts/ram_words.py`, `scripts/perf_symbols.py`, `scripts/ps2mc_extract.py`. Play binary `0d93c8c6` (built, **not run on
+the device**; by default it behaves as `e245057a`). Details `docs/PHASE_8.md`, "Game speed and sound".
+
 **2026-11-10 (later): stick fix, fog cost, GPU clock, screenshots; visual checks are the user's.** Details `docs/PHASE_8.md`,
 "Stick, heat stop, fog cost, screenshots". (1) The user's "crash" at the wand was the 85 C guard (`play-012555`, 318 s). (2) Stick:
 16 of 35 `sqrt.s` read the wrong register under PS2Recomp's semantics; `runner/gen.sh` now uses the R5900's own

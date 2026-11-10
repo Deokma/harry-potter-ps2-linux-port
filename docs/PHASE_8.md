@@ -351,3 +351,40 @@ Device binary: the device's own `runner-aarch64` of 2026-11-08 14:45 (md5 `17acd
   game speed; the opening narration needs Start to skip in scripted runs; `cvt.w.s` now truncates while float arithmetic still
   rounds to nearest (the R5900 rounds toward zero): a value that the console computes as exactly N may come out a hair under
   and truncate to N-1; nothing of the kind seen in boot, menus, load and the shop.
+
+### Game speed and sound: the world already runs in real time; sound does not (2026-11-10, code, savestates, device logs, PC)
+
+- **The game steps its world on a fixed 25 Hz clock driven by COP0 Count**, not by vblanks. The main loop (`0x250f28`) reads a
+  stopwatch over Count (`0x2f1f58` -> `0x2f2050`) and runs a logic tick (counter `0x38c210`) while
+  `tick * 250 < elapsed * 25` (constants at `0x327360` and `0x326e00`, read from a PCSX2 savestate), at most 10 ticks behind.
+  The runtime answers Count from the host's clock (`ps2portReadCount`), so the logic follows real time whatever the frame
+  rate. **Measured on the device** (`[m5m]` in `panel-152205` and `panel-220243`, play in Ollivanders): **25.0 ticks a second**
+  in every 5-s window (24.8-25.3) while 15-18 frames a second were drawn. PCSX2's savestates (one per vblank) fit the same
+  rate. The 0x3287F0 count of vblanks per frame, from which the earlier "game speed about 73 % / half" was computed, only
+  feeds a debug statistics block (`0x2ea250`, behind a flag at `0x3392e8`). **So the game world is not in slow motion; the
+  earlier figures were wrong.** What a low frame rate does cost is smoothness and input-to-screen time, not game speed.
+- **Sound is what runs slow.** The IOP (the game's sound driver) and the SPU run on the EE's cycle count, and the EE runs at
+  about 55-70 % of a PS2 on the device: the mixer made **24-28 k of 48 k samples a second** in play (`[m5h]`), and the output
+  stretches that (slow, low). PC at `PS2PORT_SLOWDOWN=50`: 10.7 k.
+- **Tried: the IOP on real time, the EE's clock left alone** (`PS2PORT_IOP_REALTIME=1`, private IOP `iop_emulator.cpp`): the
+  IOP thread runs what the EE told it plus extra cycles whenever that falls behind the host's clock (capped at 100 ms after a
+  stall), and the EE never waits for those. Sound: **44.6-47.1 k samples a second** on the PC at half speed. But the game's
+  stream library needs the IOP in step with the EE: with the IOP ahead from the start the first load crawled; ahead during a
+  load, the New Game load took 58 s instead of 38 s; held during loads and cutscenes but ahead after the menus, the next load
+  still crawled (over 84 s). Getting back in phase means freezing the IOP (no sound, and the stream stalls) or jumping the EE's
+  clock (what broke loads in the 2026-11-08 attempt). **Left off by default**; the code stays for the next attempt.
+- **`PS2PORT_REALTIME=1`** (the EE's clock on real time) now holds still during loads and caps a jump at 100 ms. One PC run at
+  half speed lost a cutscene skip with it. Off by default.
+- **What would fix sound:** an EE fast enough for real time (frame time), or a stream-safe resync of the IOP (for example
+  letting it run ahead only while no stream is open: the IOP-side stream state is not identified yet).
+- **PC test speed:** `PS2PORT_PRESENT_EVERY=N` presents only every Nth vsync (the software present took about a quarter of the
+  game's time). With `DRAW=0/1` the PC reaches the title in ~21 s and loads New Game in 7 s.
+- New tools: `scripts/ram_words.py` (guest words from RAM images and PCSX2 savestates), `scripts/perf_symbols.py` (perf output
+  of the runner by function), `scripts/ps2mc_extract.py` (lists or copies saves on a PCSX2 card image; the user's `Mcd001.ps2`
+  holds none, `Mcd002.ps2` is not in that format).
+
+### Device launcher, documentation (2026-11-10, not run on the device)
+
+- `runner/knulli/HarryPotterPS2.sh`, a Knulli Ports launcher (GPU clock, 85 C stop, log), and `scripts/install_port.sh` to put it
+  on the device. Written without device access: never run there (`docs/RUNNING.md`).
+- `docs/ENV_VARS.md` (every switch), `docs/RUNNING.md` (the three ways to start, controls, saves, heat).
