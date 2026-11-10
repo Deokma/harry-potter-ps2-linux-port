@@ -35,3 +35,30 @@ Per active voice and output sample: decode about 10 cycles (amortised over 28 sa
 3. **A decoder prototype on the device:** decode and mix a recorded register-and-DMA trace of 60 s of the street cutscene, single-threaded, timed on one A53 core, against the estimate above.
 4. **The IOP thread's headroom:** its CPU share in the street and the shop with the prototype mixing inside it, and that the game thread's frame does not move.
 5. **Then the output:** SDL2's audio device on the RG40XX H (rate and buffer it grants), and the latency from a KON to sound.
+
+## 2026-11-11: why the sound is slow, and what "native sound" would take
+
+**Why:** the game's sound modules (`LIBSD.IRX`, `SDRDRV.IRX`, `STREAM.IRX`) run on the emulated IOP, and the IOP's clock is the EE's
+cycle count. On the device the EE runs at about 55-70 % of a PS2, so the IOP, its sound driver and the SPU2 mixer do too: 24-28 k of
+48 k samples a second in play (`[m5h]`), stretched by the output into slow, low sound. The game's own logic is not slow (25.0 ticks
+a second, `docs/PHASE_8.md`, "Game speed and sound").
+
+**What does not work:** giving the IOP real time while the EE keeps its own clock (`PS2PORT_IOP_REALTIME=1`). The rate comes right
+(45-47 k on the PC at half speed), but EA's stream library (`STREAM.IRX`, also used for loading) needs the IOP in phase with the EE:
+the next load crawls.
+
+**Options, cheapest first:**
+
+1. **SPU2 on host time.** Keep the IOP as it is; run the mixer on its own clock (pulled by the audio output at 48 kHz) and apply the
+   IOP's SPU2 register writes and sample DMAs as they come. Voices then play at the right pitch and length. Streamed sound (the
+   dialog and music through `STREAM.IRX`) is refilled by the IOP at the EE's pace, so it would starve and repeat buffers unless
+   the stream's refill keeps up. Moderate work, in our own mixer (`ps2xIOP/.../iop_memory.cpp`).
+2. **Native SDRDRV (high-level).** The EE calls Sony's libsd functions through `SDRDRV`'s RPC (sceSdRemote: set a voice
+   parameter, transfer a block, key on/off). Answering those RPCs natively, straight into a native SPU2 mixer on host time, takes
+   the IOP out of sound effects and sequenced music. The protocol is Sony's and known from other emulators; a few weeks.
+3. **Native STREAM (high-level).** EA's MultiStream protocol (open, play, stop streams; disc reads into SPU RAM) would also have to
+   be answered natively, with our own disc reads. EA-specific and undocumented: reverse engineering from the IRX and the EE-side
+   library; the largest part.
+4. **A fast enough EE.** At real-time speed the clocks agree and the problem disappears (frame time work).
+
+Recommended: 1 first (a measurable step, rate checked with `PS2PORT_SPU_PCM`), then 2; 3 only if streams still break up.

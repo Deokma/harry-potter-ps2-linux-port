@@ -627,6 +627,7 @@ void ps2portDrawThrottle();
 bool ps2portFrameSyncOn();
 void ps2portFrameDisplayIdle(bool idle);
 uint64_t ps2portFrameRecorded();
+void ps2portFrameRegs(uint64_t flip, uint64_t out[7]);
 void ps2portFrameShown(uint64_t flip);
 uint64_t ps2portFrameSyncCounts(int which);
 
@@ -688,6 +689,20 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
     if (!due())
         return;
     ps2portFrameDisplayIdle(false);
+    // Present with the display registers of the flip this latch takes (2026-11-10: menus and loading screens blinked: by the
+    // time the main thread latched, the game had often flipped again, and the live DISPFB named its next, half-drawn buffer)
+    static uint64_t regsMoved = 0;
+    if (frameSync && recorded != takenFlip && recorded != 0u)
+    {
+        uint64_t regs[7];
+        ps2portFrameRegs(recorded, regs);
+        const GSRegisters &live = runtime.memory().gs();
+        if (live.dispfb1 != regs[2] || live.dispfb2 != regs[4])
+            ++regsMoved;
+        runtime.gs().ps2portSetPresentationRegs(regs);
+    }
+    else if (frameSync && recorded == takenFlip)
+        runtime.gs().ps2portSetPresentationRegs(nullptr); // no new flip (loads): the live registers, as before
     if (recorded != takenFlip)
         lastFlipAt = nowMs();
     takenFlip = recorded;
@@ -726,7 +741,7 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
     if (lagLog)
     {
         static double lagStart = t3;
-        static uint64_t before[6] = {}, latches = 0;
+        static uint64_t before[6] = {}, latches = 0, regsMovedBefore = 0;
         ++latches;
         if (t3 - lagStart >= 5000.0)
         {
@@ -735,10 +750,12 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
                 c[i] = ps2portFrameSyncCounts(i);
             const double span = (t3 - lagStart) / 1000.0;
             const uint64_t flipped = c[0] - before[0], lagged = c[5] - before[5];
-            std::fprintf(stderr, "[lag] t=%.0f sync %s: game flips/s %.1f, latches/s %.1f; flip to replayed %.1f ms avg, %.1f max; game waited %llu times, %.1f ms a frame, %llu time-outs\n",
+            std::fprintf(stderr, "[lag] t=%.0f sync %s: game flips/s %.1f, latches/s %.1f; flip to replayed %.1f ms avg, %.1f max; game waited %llu times, %.1f ms a frame, %llu time-outs; display registers had moved on at %llu latches\n",
                          seconds, frameSync ? "on" : "off", flipped / span, latches / span, lagged ? (c[4] - before[4]) / 1e6 / lagged : 0.0,
                          ps2portFrameSyncCounts(6) / 1e6, (unsigned long long)(c[1] - before[1]),
-                         flipped ? (c[2] - before[2]) / 1e6 / flipped : 0.0, (unsigned long long)(c[3] - before[3]));
+                         flipped ? (c[2] - before[2]) / 1e6 / flipped : 0.0, (unsigned long long)(c[3] - before[3]),
+                         (unsigned long long)(regsMoved - regsMovedBefore));
+            regsMovedBefore = regsMoved;
             std::memcpy(before, c, sizeof before);
             latches = 0;
             lagStart = t3;

@@ -40,6 +40,8 @@ device's menu, and playing through the rest to fix what later chapters break.
 - **Palette textures with the linear filter:** expanded once instead of filtered in the shader; the load screen's fog went from
   61 to 21.6 ms of GPU a frame.
 - **GPU clock** raised to 648 MHz for sessions (the governor stayed at 240 MHz).
+- **Menu and loading blinking (2026-11-11, built, not yet run on the device):** the screen now shows each flip with that flip's
+  display registers; it used the live ones, which in fast screens already named the next, half-drawn buffer.
 - **Game speed was misread:** the "about half speed" figure came from a debug counter. The game's logic clock reads COP0 Count,
   which the runtime serves from real time, and it ticks at 25.0 a second on the device.
 
@@ -56,12 +58,13 @@ device's menu, and playing through the rest to fix what later chapters break.
 
 1. **Player's checks:** stick, input lag, Menu + L1, the visual checklist for chapter slice 1, the Ports launcher's first start.
 2. **Sound speed:** the IOP must keep real time while staying in step with the EE for the game's disc streams. A first try
-   (`PS2PORT_IOP_REALTIME=1`) fixes the rate on the PC but makes loads crawl; off by default.
+   (`PS2PORT_IOP_REALTIME=1`) fixes the rate on the PC but makes loads crawl; off by default. Native sound options and costs:
+   `docs/PLAN_AUDIO.md`.
 3. **Frame time** in play: back toward 33 ms. The game thread is the limit in Ollivanders, then VU1 and GS parsing. A faster
    EE also fixes sound.
 4. **Heat:** runs at lower CPU clocks, less work a frame.
-5. **Movies:** the decoder (a minimal FFmpeg) is built and wired in, but the runner stops in the first movie, so movies are
-   stubbed (logos and other videos are skipped).
+5. **Movies** (the main menu's moving background is one): the decoder is built, and the libmpeg stand-in now calls the game's
+   "no data" callback and sets its end flag, but the movie setup waits for a stream thread that never starts. Stubbed until then.
 6. **Float semantics:** `cvt.w.s` truncates as on the console, but arithmetic still rounds to nearest where the R5900 rounds
    toward zero.
 7. **Play through** the rest of the game, chapter by chapter.

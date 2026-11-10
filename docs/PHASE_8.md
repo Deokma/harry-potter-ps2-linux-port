@@ -388,3 +388,32 @@ Device binary: the device's own `runner-aarch64` of 2026-11-08 14:45 (md5 `17acd
 - `runner/knulli/HarryPotterPS2.sh`, a Knulli Ports launcher (GPU clock, 85 C stop, log), and `scripts/install_port.sh` to put it
   on the device. Written without device access: never run there (`docs/RUNNING.md`).
 - `docs/ENV_VARS.md` (every switch), `docs/RUNNING.md` (the three ways to start, controls, saves, heat).
+
+### Menu and loading blinking; movies; native sound (2026-11-11, code and PC; nothing run on the device)
+
+- **User report:** the main menu and the loading screens blink; the menu's background is black where PCSX2 shows a moving
+  picture (the user's PCSX2 screenshot of the PAL menu); sound is odd; "movies not all work".
+- **Blinking, likely cause (from the code):** since frame sync, the main thread latches as soon as a flip's frame is recorded,
+  and the presentation request read the *live* display registers. In fast screens (menus, loading: up to 60 flips a second) the
+  game has often flipped again by then, so DISPFB named its next, half-drawn buffer. **Fix:** the EE stores PMODE, SMODE2, DISPFB1/2,
+  DISPLAY1/2 and BGCOLOR at each flip (`ps2_memory.cpp`, `flipRegs`); the main thread presents with the registers of the flip it
+  latches (`GS::ps2portSetPresentationRegs`; live registers when no flip came, as in loads). The `[lag]` line now counts
+  "display registers had moved on at N latches": a non-zero count in the next play log confirms the cause. Not run on the device.
+- **Build trap met:** adding data members to `GS` (a header) made the runner crash at start on the PC: `runner/build.sh` rebuilds
+  runtime objects only when their own source changes, so objects disagreed on the class layout. The state now lives outside the
+  class; objects built in between were deleted and rebuilt. **Rule: never change a runtime class's layout without deleting
+  `build-m2/*/lib`, `iop` and `own` objects** (generated code too if `PS2Runtime` changes).
+- **Movies:** the menu's background is the movie `FRONTEND.PSS` (the main menu runs inside the movie player's per-frame callback),
+  so with movies stubbed it is black. Found: this game feeds libmpeg only from its "no data" callback (0x2de690 -> 0x2de818 ->
+  0x2fa678 -> `sceMpegDemuxPssRing`), which PS2Recomp's stand-in never called; and its own `sceMpegIsEnd` (0x2fb220) reads the
+  first word of the work area given to `sceMpegCreate`, which the stand-in never set. Both are now in the stand-in (`MPEG.cpp`:
+  the callback is queued from `sceMpegGetPicture` when no picture is ready; the end word is set after the last picture and
+  cleared at create and reset; the write to `0x171904`, another game's address, is gone; `PS2PORT_MPEG_LOG=1`). **But with the
+  real movie functions the PC boot now stops earlier, in the movie setup** (0x2dd8e0 at 0x2dda28): 0x2d5288 spins until a stream
+  counter (`*(0x3a7824) >= *(0x3a7838)`) moves, and the EE thread that should move it (thread 2, entry 0x2f5770, priority 32, stack
+  next to the stream state at 0x3a7810) stays dormant; no libmpeg call is reached. Not caused by the new R5900 semantics (same
+  without the 64-bit branches). Next: find what should start thread 2 (0x2d4c88 -> 0x2f5248 / 0x2f4510, EA's IOP stream client)
+  and why it does not run. **Movies stay stubbed by default** (`PS2PORT_MOVIE_STUB=0` builds the movie path).
+- **Native sound:** plan with options and costs in `docs/PLAN_AUDIO.md` ("why the sound is slow"). The game's sound modules are
+  `LIBSD.IRX`, `SDRDRV.IRX` and EA's `STREAM.IRX`; "native" means answering SDRDRV's and STREAM's RPCs on the host with an SPU2
+  mixer on host time. Not started.

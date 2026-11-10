@@ -27,7 +27,7 @@ VAR=VALUE ...`. "Private" means the code is in the PS2Recomp checkout under `pri
 | Variable | What it writes | Where |
 |---|---|---|
 | `PS2PORT_M5_STATS=1` | Every 5 s on the device: frame times, latch and swap, CPU per thread, GPU work, memory, sound mix rate (`[m5]`, `[m5f]`, `[m5t]`, `[m5m]` with logic ticks per second, `[m5w]`, `[m5h]`). On in `device_panel.sh`. | `display.cpp` |
-| `PS2PORT_LAG_LOG=1` | Every 5 s: game flips and latches per second, flip to replayed (ms), how long the game waited for the display (`[lag]`). On in play sessions. | `display.cpp` |
+| `PS2PORT_LAG_LOG=1` | Every 5 s: game flips and latches per second, flip to replayed (ms), how long the game waited for the display, and at how many latches the live display registers had already moved on to the next flip (`[lag]`). On in play sessions. | `display.cpp` |
 | `PS2PORT_FRAME_LOG=FILE` | One line per game frame: ms since start, frame ms, vblank count, vblanks of the last frame. | `display.cpp` |
 | `PS2PORT_FRAME_DIR=DIR`, `PS2PORT_FRAME_EVERY=N` | A picture of the shown frame every N presents (device: PPM; PC: PPM named `.png`). | `display.cpp`, private runtime |
 | `PS2PORT_PAD_LOG=1` | Every change of the pad's buttons and sticks (`[pad]`). On in play sessions. | `pad_sdl.cpp` |
@@ -36,6 +36,7 @@ VAR=VALUE ...`. "Private" means the code is in the PS2Recomp checkout under `pri
 | `PS2PORT_GSDUMP=FILE:START:VSYNCS` | A GS dump in PCSX2's format (for `gsplay`), from START seconds, for VSYNCS frames. | private `gs_frontend.cpp` |
 | `PS2PORT_VU1_LOG=1` | VU1 program entries per frame. | `display.cpp` |
 | `PS2PORT_SPU_PCM=FILE` | The sound mix as raw 16-bit stereo 48 kHz PCM (also how to measure the mix rate on the PC). | private IOP |
+| `PS2PORT_MPEG_LOG=1` | The first 64 libmpeg events of each kind (callbacks registered, no-data callback calls, DemuxPssRing, GetPicture). | private `MPEG.cpp` |
 | `PS2PORT_SPU_DEBUG=1`, `PS2PORT_SPU_TRACE=1` | What goes into each SPU core's mix; SPU2 and DMA register use. | private IOP |
 | `PS2PORT_NATIVE_STATS=1` | How calls into eegen's and the vector units' native code went, at exit. | `runner/native_hooks.cpp` |
 | `PS2PORT_THROW_LOG=1` | Who throws C++ exceptions (the runtime and the IOP swallow many). | `display.cpp` |
@@ -71,7 +72,7 @@ VAR=VALUE ...`. "Private" means the code is in the PS2Recomp checkout under `pri
 |---|---|---|
 | `PS2PORT_HW_SEMANTICS=sqrt,cvt,branch,lqsq` | Which of the R5900's own semantics eegen uses where PS2Recomp's differ (default all four). | `runner/gen.sh` |
 | `PS2PORT_PS2RECOMP_SEMANTICS=1` | PS2Recomp's semantics, as the replay harness expects. | `runner/gen.sh` |
-| `PS2PORT_MOVIE_STUB` | 1 (default): the five movie functions are stubbed; 0 builds the movie path, which stops in the first movie. | `runner/gen.sh` |
+| `PS2PORT_MOVIE_STUB` | 1 (default): the five movie functions are stubbed; 0 builds the movie path, which stops in the first movie's setup (`docs/PHASE_8.md`). | `runner/gen.sh` |
 | `PS2PORT_RUNNER=PATH` | PC: which runner `scripts/ps2recomp_trial.sh boot` starts (`runner/try.sh` sets it). | `scripts/ps2recomp_trial.sh` |
 
 ## Device scripts

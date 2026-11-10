@@ -42,6 +42,16 @@ Phase reports live in `docs/PHASE_N.md`.
   (end of stream from the game's own stream state, drop the `0x171904` write); (5) thermal runs at 1.2/1.0 GHz with the
   fixed guard; (6) sticky pad presses for low-fps menus.
 
+**2026-11-11 (no device access): menu/loading blinking fix built; movies traced; native sound planned.** (1) Blinking: the screen
+now presents each flip with the display registers stored at that flip (it read the live ones, already pointing at the next,
+half-drawn buffer in fast screens); `[lag]` counts how often the live ones had moved on. Built, **not run on the device**. (2)
+Movies (the menu's background is `FRONTEND.PSS`): the libmpeg stand-in now calls the game's no-data callback and sets the end word
+its own `sceMpegIsEnd` reads; but the movie setup (0x2dd8e0) spins until a stream thread (entry 0x2f5770) moves a counter, and that
+thread stays dormant. Movies stay stubbed (`PS2PORT_MOVIE_STUB=0` to work on them, `PS2PORT_MPEG_LOG=1`). (3) Native sound:
+options in `docs/PLAN_AUDIO.md`. (4) **Build trap:** never add data members to a runtime class (`GS`, `PS2Runtime`) without
+deleting `build-m2/*/{lib,iop,own}` objects: `build.sh` does not follow header changes, and the PC runner crashed at start from a
+mixed layout. Play binary `66d69916` (built, not run on the device). Details `docs/PHASE_8.md`, "Menu and loading blinking; movies; native sound".
+
 **2026-11-10 (evening, no device access by the user's choice): game speed was misread; sound is the slow part; launcher and
 docs.** (1) The game's logic ticks on its own 25 Hz clock over COP0 Count, which the runtime serves from real time: 25.0 ticks a
 second measured in play on the device (`[m5m]`), so the world is at full speed; the old "73 % / half" came from a debug counter
