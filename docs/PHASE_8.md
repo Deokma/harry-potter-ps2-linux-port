@@ -417,3 +417,22 @@ Device binary: the device's own `runner-aarch64` of 2026-11-08 14:45 (md5 `17acd
 - **Native sound:** plan with options and costs in `docs/PLAN_AUDIO.md` ("why the sound is slow"). The game's sound modules are
   `LIBSD.IRX`, `SDRDRV.IRX` and EA's `STREAM.IRX`; "native" means answering SDRDRV's and STREAM's RPCs on the host with an SPU2
   mixer on host time. Not started.
+
+### Movies and sound, second look (2026-11-11, PC; nothing run on the device)
+
+- **Where the movie path stops** (`PS2PORT_MOVIE_STUB=0`, PC, with Cross at 5 s): not in the counter wait at 0x2d5288 (counter and
+  target are both 4 there; the "pc 0x2dda28" in the stats was a stale debug pc), but in the setup's loop around the stream feeder
+  `0x2de818` (0x2ddb04..0x2ddb38), before `sceMpegCreate`'s second call and the callbacks. The movie data comes through EA's
+  MultiStream (`STREAM.IRX`): the IOP read about 1.2 MB of `MOVIES/Q_ENG_US.PSS` (112 reads, LSN 449515-450122; the trace's cap
+  is 200), called the EE's RPC server 0x12344321 (EA's callback handler 0x2f58b8, registered by thread 2 before its
+  `sceSifRpcLoop` stub returns; the runtime calls such servers itself) 62 times, and then went quiet, while the EE kept asking
+  STREAM for status (336 calls, command words `10046 20009 ffff 17 792f0000 20031`) and got -1 each time. It looks like a
+  stalled handshake (the IOP's buffer full, the EE not taking the data); EA's protocol is undocumented. Next: decode that command
+  and the status block the handler writes (`0x3ae4b0`: 1, 0x40000, 0x10000 at the stall) against the feeder `0x2d4e70`.
+- **"SPU on host time" is not a simple switch:** the mixer runs on the IOP's clock on purpose (`iop_memory.cpp`, `spuAdvance`):
+  with host time, a short sound could start and end between two looks of the sound driver, which stalled loading once. Mixing
+  the output on host time while the voices' visible state stays on the IOP's clock would fix pitch for one-shot sounds, but
+  streamed dialog and music (refilled by `STREAM.IRX` at the IOP's pace) would play past the refilled data. Movies and sound
+  meet in the same place: EA's stream library and the IOP's clock.
+- New switch: `PS2PORT_PEEK=0xA,0xB` prints guest words with each PC stats line (`PS2PORT_STATS=1`), for stalls where game frames
+  have stopped. perf is no longer installed in WSL (kernel 6.18 update): `PERF=1` profiles come out empty.

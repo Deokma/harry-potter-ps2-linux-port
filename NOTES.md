@@ -42,6 +42,12 @@ Phase reports live in `docs/PHASE_N.md`.
   (end of stream from the game's own stream state, drop the `0x171904` write); (5) thermal runs at 1.2/1.0 GHz with the
   fixed guard; (6) sticky pad presses for low-fps menus.
 
+**2026-11-11 (later): movies and sound, second look (PC).** Movie path stops in the setup's stream-feeder loop (0x2de818), not in
+the counter wait: EA's `STREAM.IRX` reads ~1.2 MB of `Q_ENG_US.PSS`, calls the EE back 62 times, then stops, while the EE polls it
+(336 times, reply -1): a stalled EA stream handshake. Sound: the mixer must stay on the IOP's clock (host time broke loading once),
+so "SPU on host time" is not a switch. Both meet in EA's stream library and the IOP's clock. `PS2PORT_PEEK` added (PC stats); perf
+is gone from WSL. Play binary still `66d69916`. Details `docs/PHASE_8.md`, "Movies and sound, second look".
+
 **2026-11-11 (no device access): menu/loading blinking fix built; movies traced; native sound planned.** (1) Blinking: the screen
 now presents each flip with the display registers stored at that flip (it read the live ones, already pointing at the next,
 half-drawn buffer in fast screens); `[lag]` counts how often the live ones had moved on. Built, **not run on the device**. (2)

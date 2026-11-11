@@ -43,6 +43,7 @@ VAR=VALUE ...`. "Private" means the code is in the PS2Recomp checkout under `pri
 | `PS2PORT_SAMPLE=FILE` (`_FROM`, `_TO`) | Every thread's program counter each CPU tick, for `scripts/sample_threads.py`. | `display.cpp` |
 | `PS2PORT_STATS=1`, `PS2PORT_THREADS=1`, `PS2PORT_TIMESHARE=FILE`, `PS2PORT_CALLCOUNT=FILE` | PC runs: present and DMA counters; EE threads and semaphores; host time per guest function; every function entry. | private runtime |
 | `PS2PORT_GIF_LOG=FILE`, `PS2PORT_GIF_RAW=FILE:FROM:COUNT` | GIF packets as a log; the packets themselves. | private `ps2_memory.cpp` |
+| `PS2PORT_PEEK=0xA,0xB` | PC: guest words with each stats line (`PS2PORT_STATS=1`), also when game frames have stopped. | private runtime |
 | `PS2PORT_IOP_TRACE`, `PS2PORT_IOP_ALLOCS` | IOP RPC calls; IOP memory allocations. | private runtime and IOP |
 | `PS2PORT_SNAP_PC=0xADDR`, `PS2PORT_SNAP_NTH=N`, `PS2PORT_SNAP_FILE=FILE` | A snapshot of RAM and context the Nth time the EE reaches ADDR (replay harness input). | private runtime |
 
