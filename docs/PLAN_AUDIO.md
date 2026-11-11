@@ -62,3 +62,11 @@ the next load crawls.
 4. **A fast enough EE.** At real-time speed the clocks agree and the problem disappears (frame time work).
 
 Recommended: 1 first (a measurable step, rate checked with `PS2PORT_SPU_PCM`), then 2; 3 only if streams still break up.
+
+## 2026-11-11 (later): the real cause, and the fix in place
+
+The IOP's clock is the EE's, and that clock stood still while the EE thread waited on the host, above all in the game's frame-end
+wait for VIF1, GIF and VU1 to go idle (answered only once the GS worker has drained its queue). The EE's execution speed was the
+smaller part. `PS2PORT_REALTIME` (the EE's clock catches up with real time, held during loads) is now on by default: on the PC with
+the EE slowed to the device's pace the mix went from 25-26 k to 47-48 k frames a second in play. Options 1-3 above are not needed
+for the rate; they stay as ways to take the IOP's cost off the device if it shows up. Not yet measured on the device (`[m5h]`).

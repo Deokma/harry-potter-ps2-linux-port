@@ -19,7 +19,9 @@ VAR=VALUE ...`. "Private" means the code is in the PS2Recomp checkout under `pri
 | `PS2PORT_NO_SOUND` | off | 1: the SPU mixes nothing at all. | private IOP |
 | `PS2PORT_SHOT_DIR` | `/userdata/screenshots` (device), `private/screenshots` (PC) | Where Menu + L1 (device), Enter or SIGUSR1 (PC) save a PNG. | `display.cpp` |
 | `PS2PORT_SHOT_AT` | none | Screenshots at these seconds after start: `20,45`. | `display.cpp` |
-| `PS2PORT_MOVIE_DIRECT` | 1 | When EA's disc stream gives the movie decoder nothing, the decoder reads the movie file from the disc folder itself (pictures only; the movie's own sound stays silent). 0: off (the movie then waits for the stream, which stalls here). | private `MPEG.cpp` |
+| `PS2PORT_REALTIME` | 1 | The EE's clock (and with it the IOP's: sound driver, SPU mixer, vblanks) follows the host's clock: when the EE thread runs slower than a PS2 or waits on the host, time jumps ahead (at most 100 ms at once); held while the game loads (mode 0). Sound at the right speed and pitch. 0: off (sound at the EE's pace, about half speed on the device). `=2`: the IOP keeps to the EE's own cycles (experiment). | private `EeScheduler.cpp` |
+| `PS2PORT_CD_LATENCY_US` | 2000 | When a CD read's completion callback runs on the IOP, in microseconds after the request (was 3.5 us). | private IOP |
+| `PS2PORT_MOVIE_DIRECT` | 1 | When EA's disc stream gives the movie decoder nothing, the decoder reads the movie file from the disc folder itself, 64 KB at a time, and hands the movie's sound packets to the game's audio callback. 0: off (the movie then waits for the stream, which stalls here). | private `MPEG.cpp` |
 | `GSGLES_PAL_EXPAND` | 1 | Palette textures drawn with the linear filter are expanded to RGBA once (one texture fetch instead of eight). 0: old shader path. | `gsgles/gs_gles_backend.cpp` |
 | `GPU_MIN_HZ` | 648000000 | The GPU's minimum clock for a device session (its governor otherwise stays at 240 MHz). 0: leave it. | `runner/device_play.sh`, `device_panel.sh` |
 
@@ -41,12 +43,16 @@ VAR=VALUE ...`. "Private" means the code is in the PS2Recomp checkout under `pri
 | `PS2PORT_SPU_DEBUG=1`, `PS2PORT_SPU_TRACE=1` | What goes into each SPU core's mix; SPU2 and DMA register use. | private IOP |
 | `PS2PORT_NATIVE_STATS=1` | How calls into eegen's and the vector units' native code went, at exit. | `runner/native_hooks.cpp` |
 | `PS2PORT_THROW_LOG=1` | Who throws C++ exceptions (the runtime and the IOP swallow many). | `display.cpp` |
+| `PS2PORT_STACKS=S1,S2` (`PS2PORT_STACKS_THREAD=Game`) | The host call stack of each thread whose name starts with the given text, at those seconds (`[stack]`, names: `scripts/stack_symbols.py LOG RUNNER`). Where a blocked thread waits, without a debugger. PC. | `display.cpp` |
 | `PS2PORT_SAMPLE=FILE` (`_FROM`, `_TO`) | Every thread's program counter each CPU tick, for `scripts/sample_threads.py`. | `display.cpp` |
 | `PS2PORT_STATS=1`, `PS2PORT_THREADS=1`, `PS2PORT_TIMESHARE=FILE`, `PS2PORT_CALLCOUNT=FILE` | PC runs: present and DMA counters; EE threads and semaphores; host time per guest function; every function entry. | private runtime |
-| `PS2PORT_GIF_LOG=FILE`, `PS2PORT_GIF_RAW=FILE:FROM:COUNT` | GIF packets as a log; the packets themselves. | private `ps2_memory.cpp` |
+| `PS2PORT_GIF_LOG=FILE`, `PS2PORT_GIF_RAW=FILE:FROM:COUNT` | GIF packets as a log; the packets themselves. `scripts/ps2recomp_trial.sh` sets the log unless `PS2PORT_GIF_LOG=` (empty): writing it slows the GS side, and so the EE and the IOP, so turn it off for timing and sound. | private `ps2_memory.cpp` |
+| (always) | `[stream-open] PATH`: every file the game opens through EA's stream library (cutscenes `CUT/*.HOG`, movies, music), so a log shows which cutscene was playing. | private `RPC.cpp` |
+| `PS2PORT_STATS=1` (PC) | Also `[clock]`: the EE's vblank count, the time `PS2PORT_REALTIME` added, and how long the EE side waited on the host, by place (scheduler, GS queue, display, frame sync, GS worker, IOP). | private runtime |
 | `PS2PORT_PEEK=0xA,0xB` | PC: guest words with each stats line (`PS2PORT_STATS=1`), also when game frames have stopped. | private runtime |
 | `PS2PORT_IOP_TRACE`, `PS2PORT_IOP_ALLOCS` | IOP RPC calls (with every MultiStream command of a packet, `[ee-rpc] cmds`), IOP modules as they load (`[iop] module`); IOP memory allocations. | private runtime and IOP |
 | `PS2PORT_IOP_PEEK=0xA,0xB` | PC: IOP words with each stats line (`PS2PORT_STATS=1`). | private runtime |
+| `PS2PORT_IOP_WATCH=0xA[,0xB...]` | Every IOP byte store to up to four addresses, with the IOP pc and ra (`[iop-watch]`). | private IOP |
 | `PS2PORT_IOP_SEMA=ID` | Every SignalSema of one IOP semaphore, with the caller. | private IOP |
 | `PS2PORT_SNAP_PC=0xADDR`, `PS2PORT_SNAP_NTH=N`, `PS2PORT_SNAP_FILE=FILE` | A snapshot of RAM and context the Nth time the EE reaches ADDR (replay harness input). | private runtime |
 
@@ -66,7 +72,6 @@ VAR=VALUE ...`. "Private" means the code is in the PS2Recomp checkout under `pri
 | Variable | What it does | State |
 |---|---|---|
 | `PS2PORT_IOP_REALTIME=1` | The IOP (sound driver, SPU) follows the host's clock in play modes (2-5) while the EE keeps its own. Sound at 45-47 k of 48 k samples a second on the PC at half speed (10.7 k without). | The next load after the menus crawls (the stream library needs the IOP in phase with the EE). Not for play. |
-| `PS2PORT_REALTIME=1` (`=2`: IOP apart) | The EE's cycle count follows the host's clock; held during loads; a jump is at most 100 ms. | Loads slow down and a cutscene skip was lost in one PC run. Not for play. |
 | `PS2PORT_IOP_REALTIME=2` | The IOP's clock is never held for the EE (`=1` holds it during loads). | Tried for the movie stream stall: no change. |
 | `PS2PORT_IOP_THREAD=0`, `PS2PORT_GS_THREAD=0`, `PS2PORT_GS_DRAW_THREAD=0` | Run the IOP, the GS side (stage A) or GS drawing (stage B) on the game's thread, as PS2Recomp did. | For bisecting. |
 | `PS2PORT_NO_EG=1`, `PS2PORT_NO_VU0=1`, `PS2PORT_NO_VU1=1`, `PS2PORT_EG_FROM/TO=HEX`, `PS2PORT_NO_EG_RESUME=1` | Turn eegen's code or the translated vector units off (or limit eegen to a range) and use PS2Recomp's code or interpreter instead. | For bisecting a difference. |

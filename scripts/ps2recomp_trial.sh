@@ -105,11 +105,13 @@ boot() {
     # PERF=1: sample the run with perf (cpu-clock) and write a symbol report.
     # perf can't write its data file onto /mnt/d, so it goes to /tmp first.
     perf=$(ls /usr/lib/linux-tools/*/bin/perf 2>/dev/null | head -1)
+    # the GIF log (every packet, a file on /mnt/d) slows the GS side, and so the EE and the IOP: PS2PORT_GIF_LOG= (empty) turns
+    # it off for timing and sound runs (runner/try_sound.sh does)
     prof=""
     if [ "${PERF:-0}" = 1 ]; then
         prof="$perf record -e cpu-clock -F 499 -o /tmp/ps2port-perf.data --"
     fi
-    PS2PORT_HEADLESS=1 PS2PORT_RUN_SECONDS=$1 PS2PORT_PAD=${2:-} PS2PORT_FRAME_DIR=$dir/frames PS2PORT_GIF_LOG=$dir/gif.log \
+    PS2PORT_HEADLESS=1 PS2PORT_RUN_SECONDS=$1 PS2PORT_PAD=${2:-} PS2PORT_FRAME_DIR=$dir/frames PS2PORT_GIF_LOG=${PS2PORT_GIF_LOG-$dir/gif.log} \
         timeout -k 10 $(($1 + 30)) $prof \
         "${PS2PORT_RUNNER:-$tp/build-runtime/ps2xRuntime/ps2EntryRunner}" "$elf" > "$dir/log.txt" 2>&1 \
         && rc=0 || rc=$?

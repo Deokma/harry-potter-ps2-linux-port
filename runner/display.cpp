@@ -17,6 +17,7 @@
 #include <dirent.h>
 #include <sys/stat.h>
 #include <dlfcn.h>
+#include <execinfo.h>
 #include <signal.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
@@ -276,10 +277,85 @@ namespace
 {
     void sampling(double seconds); // below
 }
+// PS2PORT_STACKS=S1,S2,...: at those seconds, every thread whose name starts with PS2PORT_STACKS_THREAD (default "Game") prints its
+// host call stack (addresses; scripts/stack_symbols.py names them). For "where does a blocked thread wait" when there is no debugger.
+namespace
+{
+    void stackSignal(int)
+    {
+        void *frames[48];
+        const int n = backtrace(frames, 48);
+        char line[48 * 20 + 64]; // one write, so two threads' stacks do not interleave
+        int len = std::snprintf(line, sizeof(line), "[stack] tid %ld:", static_cast<long>(syscall(SYS_gettid)));
+        for (int i = 0; i < n && len < static_cast<int>(sizeof(line)) - 24; ++i)
+            len += std::snprintf(line + len, sizeof(line) - static_cast<size_t>(len), " %p", frames[i]);
+        line[len++] = '\n';
+        (void)!write(2, line, static_cast<size_t>(len));
+    }
+
+    void stackDumps(double seconds)
+    {
+        static const char *when = std::getenv("PS2PORT_STACKS");
+        static size_t next = 0;
+        static std::vector<double> times;
+        if (!when)
+            return;
+        if (times.empty() && next == 0)
+        {
+            for (const char *q = when; *q;)
+            {
+                char *end = nullptr;
+                const double t = std::strtod(q, &end);
+                if (end == q)
+                    break;
+                times.push_back(t);
+                q = *end ? end + 1 : end;
+            }
+            void *warm[4];
+            (void)backtrace(warm, 4); // loads libgcc before any signal
+            signal(SIGUSR2, stackSignal);
+            if (FILE *maps = std::fopen("/proc/self/maps", "rb"))
+            {
+                char row[512];
+                if (std::fgets(row, sizeof(row), maps))
+                    std::fprintf(stderr, "[stack] map %s", row); // the runner's load address, for the symbol names
+                while (std::fgets(row, sizeof(row), maps))
+                    if (std::strstr(row, "libc.so") && std::strstr(row, " 00000000 "))
+                        std::fprintf(stderr, "[stack] libc %s", row); // and libc's
+                std::fclose(maps);
+            }
+        }
+        if (next >= times.size() || seconds < times[next])
+            return;
+        ++next;
+        const char *prefix = std::getenv("PS2PORT_STACKS_THREAD") ? std::getenv("PS2PORT_STACKS_THREAD") : "Game";
+        if (DIR *dir = opendir("/proc/self/task"))
+        {
+            while (dirent *e = readdir(dir))
+            {
+                if (e->d_name[0] == '.')
+                    continue;
+                char path[96], name[32] = {};
+                std::snprintf(path, sizeof(path), "/proc/self/task/%s/comm", e->d_name);
+                if (FILE *f = std::fopen(path, "rb"))
+                {
+                    if (!std::fgets(name, sizeof(name), f))
+                        name[0] = 0;
+                    std::fclose(f);
+                }
+                if (std::strncmp(name, prefix, std::strlen(prefix)) == 0)
+                    syscall(SYS_tgkill, getpid(), std::atoi(e->d_name), SIGUSR2);
+            }
+            closedir(dir);
+        }
+    }
+}
+
 // (the PC runner also samples threads from here, PS2PORT_SAMPLE: no display loop of ours runs there)
 bool ps2portShotWanted(double seconds)
 {
     sampling(seconds);
+    stackDumps(seconds);
     return shotWanted(seconds);
 }
 void ps2portSaveShot(const uint8_t *rgba, uint32_t w, uint32_t h, const uint8_t *rdram, double seconds)

@@ -497,3 +497,42 @@ Device binary: the device's own `runner-aarch64` of 2026-11-08 14:45 (md5 `17acd
 - **Default changed:** `runner/gen.sh` now builds the movie path (`PS2PORT_MOVIE_STUB=0`); `PS2PORT_MOVIE_STUB=1` brings the stub
   back. Movie sound, and the stream stall itself, stay open. Play binary `a39c955f` (stripped `runner-aarch64`; built, not run on
   the device); the previous one is kept as `runner-aarch64.66d69916`.
+
+### Sound speed, cutscenes that never end, movie sound (2026-11-11, PC; nothing run on the device)
+
+- **User report (device, build `a39c955f`):** movies play but silent; sound slow and odd; "sometimes scripts or cutscenes don't
+  end, maybe tied to the frame rate".
+- **PC test trap found first:** `scripts/ps2recomp_trial.sh` always wrote a GIF packet log to `/mnt/d`; those writes blocked the
+  GS worker, which blocked the EE at the game's frame-end wait, which stopped EE and IOP time. All earlier PC sound and timing
+  numbers were taken with it. It is now off with `PS2PORT_GIF_LOG=` (empty); `runner/try_sound.sh` does that. With it off, the
+  PC with the EE slowed to the device's pace (`PS2PORT_SLOWDOWN=60`) mixes 25-26 k of 48 k frames a second, as the device did
+  (24-28 k).
+- **Why the sound is slow:** the IOP (sound driver, SPU mixer) runs on the EE's clock, and that clock stops whenever the EE thread
+  waits on the host. The biggest wait: the game's own frame-end loop (`0x2e2268` -> `0x2f68e0`) polls VIF1, GIF and VU1 until
+  they are idle, and the runtime answers those reads only after the GS worker has finished its queue
+  (`PS2Memory::ps2portGsAcquire`, found with the new `PS2PORT_STACKS`). On a PS2 time keeps running during that wait; here it
+  stood still, so the IOP got about half the time it needed. **Fix: `PS2PORT_REALTIME` is now on by default** (the EE's clock
+  catches up with real time, at most 100 ms at once, held while the game loads). PC at device pace: **47-48 k frames a second
+  (97-100 %) in play**, about 55 % during loads (held on purpose: loads step once a frame and would get slower).
+- **Why cutscenes (and the title narration, and movies' own stream) stopped for good:** a race in our IOP emulation. EA's
+  `STREAM.IRX` asks the EE after each block whether to go on (`FUN_0000daac`, an RPC to the EE server 0x12344321) and sleeps; the
+  EE answers 0 ("ring full") and wakes it. The woken IOP thread ran only when the IOP thread next got cycles; before that, the EE
+  could already send `51(5, ch)` ("go on"), and then the IOP thread resumed and wrote the old answer 0 over the go-on flag
+  (watched with the new `PS2PORT_IOP_WATCH`: stores at IOP pc 0x5ea84, then 0x5a618). The EE had said go on and never said it
+  again: the stream stopped, and a cutscene timed by it never ended. Whether the EE got in first depended on timing, hence
+  "sometimes". **Fix (`ps2_iop_host.cpp`, `iop_emulator.cpp`):** when the EE delivers a reply to a sleeping IOP thread, the IOP
+  runs 16,384 cycles at once (`ps2portIopRunAhead`), paid back from the EE's next grants so the two stay in phase.
+- **Measured (PC, no slowdown, New Game, untraced):** before the fix the run stayed in `CUT\HPM02.HOG` for 370 s; after it,
+  HPM02 (39 s) -> HPM03 (87 s) -> HPM04A (111 s) -> mode 2 (160 s) -> mode 5, play, at 183 s. EA's own movie stream no longer
+  dies after 256 KB either (1.2 MB of the EA logo in 50 s), but it is slow (about 30 KB/s), so movie pictures still come from the
+  disc folder (`PS2PORT_MOVIE_DIRECT`).
+- **CD latency:** a CD read's completion callback came 128 IOP cycles (3.5 us) after the request, between two instructions of the
+  thread that asked. It now comes after 2 ms (`PS2PORT_CD_LATENCY_US`), nearer a drive. Not the cause of the stall above.
+- **Movie sound:** PS2Recomp's libmpeg stand-in numbered the stream types wrongly (PCM 1, ADPCM 2; Sony's are M2V 0, IPU 1, PCM 2,
+  ADPCM 3), so this game's ADPCM callback (`0x2de510`, it copies the sound into its own ring) never got a packet and its IPU
+  callback got the sound instead. Fixed; in direct mode the stand-in now reads the movie 64 KB at a time into a guest buffer and
+  passes each chunk's sound packets to that callback before the next chunk.
+- **New tools:** `runner/try_sound.sh` (a PC run with the mix captured; `scripts/pcm_stats.py` gives mix rate and loudness per 10 s
+  of real time), `PS2PORT_STACKS` + `scripts/stack_symbols.py` (host call stacks of blocked threads, no debugger needed),
+  `PS2PORT_IOP_WATCH` (IOP byte stores to up to four addresses), the PC `[clock]` line (vblanks, real-time catch-up, host waits by
+  place), and `[stream-open] PATH` in every log (which cutscene, movie or music stream was opened when).
