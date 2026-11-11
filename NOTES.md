@@ -42,6 +42,17 @@ Phase reports live in `docs/PHASE_N.md`.
   (end of stream from the game's own stream state, drop the `0x171904` write); (5) thermal runs at 1.2/1.0 GHz with the
   fixed guard; (6) sticky pad presses for low-fps menus.
 
+**2026-11-11 (night): sound speed and the stream race (PC).** User (device, `a39c955f`): movies work but silent, sound slow,
+cutscenes sometimes never end. (1) Sound: the IOP's clock is the EE's, which stopped while the EE thread waited on the host
+(frame-end VIF1/GIF/VU1 wait behind `ps2portGsAcquire`); `PS2PORT_REALTIME` now on by default: PC at device pace
+(`PS2PORT_SLOWDOWN=60`) mixes 47-48 k of 48 k frames/s in play (25-26 k before). (2) STREAM.IRX race: the EE's go-on (`51(5,ch)`)
+overwritten by the IOP thread resuming with the previous "ring full" reply; fixed by `ps2portIopRunAhead` after each reply. New
+Game cutscenes then complete on the fast PC (to play, mode 5, at 183 s). (3) Open: at device pace a second stall (an IOP-side sound
+stream, 63-sector reads below LBA 400000, stops refilling as the cutscene data ends); being tested with `PS2PORT_REALTIME=0`.
+(4) Movie sound: stand-in stream type numbers fixed (ADPCM 3), sound packets passed in direct mode, still silent (few packets
+reach the game's ring). PC trap: `PS2PORT_GIF_LOG=` for any timing/sound run. Tools: `runner/try_sound.sh`, `scripts/pcm_stats.py`,
+`PS2PORT_STACKS` + `scripts/stack_symbols.py`, `PS2PORT_IOP_WATCH`. Play binary now `43407554` (built, not run on the device; previous `runner-aarch64.a39c955f`).
+
 **2026-11-11 (late): movie pictures on screen (PC); movies on by default.** Stream callbacks now finish before
 `sceMpegDemuxPssRing` returns (pictures had 0x0 size), and when EA's stream starves the libmpeg stand-in reads the `.PSS` from the
 disc folder itself (`PS2PORT_MOVIE_DIRECT`, on; movie sound silent). PC boot: EA logo, WB splash, title, START, main menu with

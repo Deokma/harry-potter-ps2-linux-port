@@ -314,6 +314,7 @@ namespace
             void *warm[4];
             (void)backtrace(warm, 4); // loads libgcc before any signal
             signal(SIGUSR2, stackSignal);
+            signal(SIGABRT, stackSignal); // a failed assert prints its stack too (then aborts as before)
             if (FILE *maps = std::fopen("/proc/self/maps", "rb"))
             {
                 char row[512];
@@ -325,29 +326,48 @@ namespace
                 std::fclose(maps);
             }
         }
-        if (next >= times.size() || seconds < times[next])
+        if (next != 0)
             return;
-        ++next;
-        const char *prefix = std::getenv("PS2PORT_STACKS_THREAD") ? std::getenv("PS2PORT_STACKS_THREAD") : "Game";
-        if (DIR *dir = opendir("/proc/self/task"))
-        {
-            while (dirent *e = readdir(dir))
-            {
-                if (e->d_name[0] == '.')
-                    continue;
-                char path[96], name[32] = {};
-                std::snprintf(path, sizeof(path), "/proc/self/task/%s/comm", e->d_name);
-                if (FILE *f = std::fopen(path, "rb"))
-                {
-                    if (!std::fgets(name, sizeof(name), f))
-                        name[0] = 0;
-                    std::fclose(f);
-                }
-                if (std::strncmp(name, prefix, std::strlen(prefix)) == 0)
-                    syscall(SYS_tgkill, getpid(), std::atoi(e->d_name), SIGUSR2);
-            }
-            closedir(dir);
-        }
+        next = 1;
+        // a thread of its own, so the dumps come also when the thread that calls this has stopped (a deadlock)
+        const double startOffset = seconds;
+        std::thread([startOffset]()
+                    {
+                        const auto base = std::chrono::steady_clock::now() - std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                                                                    std::chrono::duration<double>(startOffset));
+                        const char *prefix = std::getenv("PS2PORT_STACKS_THREAD") ? std::getenv("PS2PORT_STACKS_THREAD") : "Game";
+                        for (double t : times)
+                        {
+                            std::this_thread::sleep_until(base + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                                                     std::chrono::duration<double>(t)));
+                            const long self = static_cast<long>(syscall(SYS_gettid));
+                            if (DIR *dir = opendir("/proc/self/task"))
+                            {
+                                while (dirent *e = readdir(dir))
+                                {
+                                    if (e->d_name[0] == '.' || std::atol(e->d_name) == self)
+                                        continue;
+                                    char path[96], name[32] = {};
+                                    std::snprintf(path, sizeof(path), "/proc/self/task/%s/comm", e->d_name);
+                                    if (FILE *f = std::fopen(path, "rb"))
+                                    {
+                                        if (!std::fgets(name, sizeof(name), f))
+                                            name[0] = 0;
+                                        std::fclose(f);
+                                    }
+                                    if (std::strncmp(name, prefix, std::strlen(prefix)) == 0)
+                                    {
+                                        char line[64];
+                                        const int len = std::snprintf(line, sizeof(line), "[stack] thread %s %s", e->d_name, name);
+                                        (void)!write(2, line, static_cast<size_t>(len));
+                                        syscall(SYS_tgkill, getpid(), std::atoi(e->d_name), SIGUSR2);
+                                        std::this_thread::sleep_for(std::chrono::milliseconds(20)); // one stack at a time
+                                    }
+                                }
+                                closedir(dir);
+                            }
+                        } })
+            .detach();
     }
 }
 

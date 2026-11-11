@@ -42,6 +42,8 @@ device's menu, and playing through the rest to fix what later chapters break.
 - **GPU clock** raised to 648 MHz for sessions (the governor stayed at 240 MHz).
 - **Menu and loading blinking (2026-11-11, built, not yet run on the device):** the screen now shows each flip with that flip's
   display registers; it used the live ones, which in fast screens already named the next, half-drawn buffer.
+- **Sound speed (2026-11-11, PC, not yet run on the device):** the sound driver's clock stood still while the game waited at
+  the end of each frame; now it follows real time (`PS2PORT_REALTIME`, on).
 - **Movies (2026-11-11, PC, not yet run on the device):** the logos, the main menu's moving background and the trailer now
   decode and reach the screen; movie sound is silent for now.
 - **Game speed was misread:** the "about half speed" figure came from a debug counter. The game's logic clock reads COP0 Count,
@@ -52,16 +54,15 @@ device's menu, and playing through the rest to fix what later chapters break.
 | Thing | Value |
 |---|---|
 | Frame in Ollivanders | about 55-67 ms (15-18 frames a second); the game draws at 30. Logic still at full speed. |
-| Sound | the mixer makes 24-28 k of 48 k samples a second in play, so it plays slow and low: the sound driver runs on the slow EE's clock. |
+| Sound | 24-28 k of 48 k samples a second on the device before 2026-11-11; with the EE clock on real time, 47-48 k on the PC at the device's pace (not yet measured on the device). |
 | Heat | 85 C after 5 to 13 minutes of play at 1.416 GHz; a guard stops the session there. |
 | Memory | flat in a 15-minute soak after the Phase 7 fix. |
 
 ## Open, in rough order
 
 1. **Player's checks:** stick, input lag, Menu + L1, the visual checklist for chapter slice 1, the Ports launcher's first start.
-2. **Sound speed:** the IOP must keep real time while staying in step with the EE for the game's disc streams. A first try
-   (`PS2PORT_IOP_REALTIME=1`) fixes the rate on the PC but makes loads crawl; off by default. Native sound options and costs:
-   `docs/PLAN_AUDIO.md`.
+2. **Cutscenes that sometimes never end:** one cause fixed (a race in the IOP emulation that lost EA's stream go-on); a second
+   stall remains at the device's pace. Then movie sound (silent).
 3. **Frame time** in play: back toward 33 ms. The game thread is the limit in Ollivanders, then VU1 and GS parsing. A faster
    EE also fixes sound.
 4. **Heat:** runs at lower CPU clocks, less work a frame.

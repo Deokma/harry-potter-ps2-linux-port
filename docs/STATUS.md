@@ -20,7 +20,7 @@ movies and the later chapters are left.
 | Controls | 95 % | SDL2, PS2 layout by position, sticky taps, at most one frame of lag; the stick fix is waiting for the user's test. |
 | Saves | 90 % | Write, restart, Continue measured on the device. Save time shows 6 h off (clock stub's time zone). |
 | Game speed | 95 % | The logic ticks at 25.0 a second (measured): real time. |
-| Sound | 35 % | Plays, but at 24-28 k of 48 k samples a second (the IOP follows the slow EE): slow and low. |
+| Sound | 55 % | Real-time speed on the PC at the device's EE pace (47-48 k of 48 k samples a second; the device measured 24-28 k before the fix); not yet run on the device. Movie sound silent. |
 | Movies | 60 % | Pictures play on the PC (logos, menu background, trailer), read from the disc folder because EA's stream stalls; movie sound silent; not run on the device. |
 | Frame time | 50 % | 55-67 ms in Ollivanders with the full picture (15-18 a second). |
 | Heat | 40 % | 85 C after 5-13 minutes at 1.416 GHz; the session stops there. |
@@ -30,10 +30,9 @@ movies and the later chapters are left.
 
 1. **The user's tests** (device): stick, lag, Menu + L1, `docs/VISUAL_CHECKLIST.md`, `sh scripts/install_port.sh` and the Ports
    entry. Read the play log's `[lag]` and `[pad]` lines afterwards.
-2. **Sound speed.** Find the IOP side's stream state (open streams) so the IOP can run on real time only while no stream is
-   open, or resync without breaking a stream. Code: private `ps2xIOP/src/emulator/iop_emulator.cpp` (`ps2portIopGoal`);
-   measure on the PC with `PS2PORT_SLOWDOWN=50 PS2PORT_SPU_PCM=FILE` (bytes / 4 / seconds = samples a second) and the New Game
-   load time (mode 0 to 9: 38 s at half speed, 7 s at full).
+2. **Cutscenes that never end** (at the device's pace on the PC, `PS2PORT_SLOWDOWN=60`): one cause fixed (the stream race,
+   `docs/PHASE_8.md`, "Sound speed, cutscenes that never end"); a second remains: an IOP-side sound stream stops refilling as
+   the cutscene's data stream ends (HPM02 or HPM03). Measure with `runner/try_sound.sh` and `PS2PORT_IOP_TRACE=1`.
 3. **Frame time** (device): profile the shop (`PS2PORT_SAMPLE`), the game thread first.
 4. **Movies:** pictures play (PC); left: the user's visual check, decode cost on the device, movie sound, and why EA's
    `STREAM.IRX` stops refilling (`docs/PHASE_8.md`, "Movie pictures on screen").

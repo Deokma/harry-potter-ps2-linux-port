@@ -536,3 +536,15 @@ Device binary: the device's own `runner-aarch64` of 2026-11-08 14:45 (md5 `17acd
   of real time), `PS2PORT_STACKS` + `scripts/stack_symbols.py` (host call stacks of blocked threads, no debugger needed),
   `PS2PORT_IOP_WATCH` (IOP byte stores to up to four addresses), the PC `[clock]` line (vblanks, real-time catch-up, host waits by
   place), and `[stream-open] PATH` in every log (which cutscene, movie or music stream was opened when).
+- **Still open, at the device's pace on the PC (`PS2PORT_SLOWDOWN=60`):** the New Game cutscenes stop again in HPM02 or HPM03 in
+  3 of 3 runs, with the clock on real time or not (so not the jumps). The trace: an IOP-side sound stream (one index sector, then
+  63 sectors into IOP buffers 0x1349f8 / 0x1549f8, every 2.6 s, LBA 9012-9203, below the ISO's file area) does not refill after
+  its last chunk, which comes as the cutscene's data stream (handle 0x11) reads its last partial block; afterwards every stream
+  channel in `STREAM.IRX` is idle and the cutscene waits. At full PC speed the same cutscenes finish. Next: the EE side's stream
+  status for that sound stream (what it waits for), and SPU voice end flags (the stream module watches them to refill and to
+  report the end).
+- **Movie sound still silent:** the game's ADPCM callback now gets sound packets (no refusals), but only a few, and the menu
+  stays at RMS 0. Its ring (48 KB at 0xabd1c0 in the menu) is drained once, by about 10 KB, then never again: it fills and
+  refuses packets (17 of 32). Next: find what moves that ring to the IOP and why it stops after one transfer.
+- Play binary `43407554` (stripped `runner-aarch64`; built, not run on the device); the previous one is kept as
+  `runner-aarch64.a39c955f`.
