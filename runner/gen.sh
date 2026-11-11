@@ -33,6 +33,14 @@ rm -rf "$out/eg.new"
 python3 -I eegen/eegen.py "$elf" "$t/function_map.csv" "$out/eg.new" --functions "$out/functions.txt" \
     --ps2recomp-table "$t/out-b/register_functions.cpp" --native "$out/native.txt" --skip "$skip" $floats $semantics --runtime-count --checkpoints \
     --borrow "$t/out-b" | tail -4 | cut -c1-240
+# The five movie functions in PS2Recomp's tree are what eegen's code falls back to when it resumes in the middle of one (eegen
+# resumes only at loop heads): the stubs when movies are stubbed, PS2Recomp's real code otherwise (2026-11-11: with the stub
+# there, the movie setup livelocked at 0x2dda30). Copies in trial/movie-stub and trial/movie-real (from out-m).
+movies=$t/movie-real
+[ "${PS2PORT_MOVIE_STUB:-1}" = 1 ] && movies=$t/movie-stub
+for f in "$movies"/FUN_*.cpp; do
+    cmp -s "$f" "$tp/PS2Recomp/ps2xRuntime/src/runner/$(basename "$f")" || cp "$f" "$tp/PS2Recomp/ps2xRuntime/src/runner/"
+done
 # keeps unchanged files' times, so that the build recompiles only the batches that changed
 rsync -rc --delete "$out/eg.new/" "$out/eg/"
 rm -rf "$out/eg.new"

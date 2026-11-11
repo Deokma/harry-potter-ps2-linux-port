@@ -436,3 +436,30 @@ Device binary: the device's own `runner-aarch64` of 2026-11-08 14:45 (md5 `17acd
   meet in the same place: EA's stream library and the IOP's clock.
 - New switch: `PS2PORT_PEEK=0xA,0xB` prints guest words with each PC stats line (`PS2PORT_STATS=1`), for stalls where game frames
   have stopped. perf is no longer installed in WSL (kernel 6.18 update): `PERF=1` profiles come out empty.
+
+### Movies decode on the PC (2026-11-11, PC; nothing run on the device)
+
+- **EA MultiStream protocol (decoded from the EE library and the user's decompile of `STREAM.IRX`, kept in
+  `private/third_party/trial/stream.irx.c`):** a packet is halfwords: `0x46`, command count, then per command `opcode, n` and n
+  halfword arguments (dispatcher in `STREAM.IRX` at 0x8cf0). EE library functions by opcode (EE side): 0x01 `0x2f27f0`, 0x09
+  `0x2f30b0` (idle poll, sent when nothing is queued), 0x0d `0x2f3348` (start reading a stream), 0x0f `0x2f3210` (close), 0x1f
+  `0x2f4510` (open a path), 0x29 `0x2f4698` (read a block), 0x33 `0x2f5248`; the rest in the commit's notes. The IOP answers each
+  block with two RPCs to the EE server 0x12344321: `[999, pos, size, 1, ee_addr, block, handle]` (transfer start) and `[1, newpos,
+  size, 0, ee_addr, block, handle]` (done). The RPC trace (`PS2PORT_IOP_TRACE=1`) now prints every command of a packet
+  (`[ee-rpc] cmds`) and each open path wherever it sits.
+- **Why the movie setup hung:** eegen's code resumes only at loop heads; when a call returned into the middle of the movie setup
+  (0x2dd8e0 at 0x2dda30, after a loop that checkpointed), the runtime fell back to PS2Recomp's version of the function, and in
+  the tree that was the 19-line movie stub, so the dispatcher livelocked (the game thread ran 0 % guest code; found with the
+  thread sampler, which now also runs on the PC: `PS2PORT_SAMPLE`). **Fix:** `runner/gen.sh` puts PS2Recomp's real code for the five
+  movie functions into its tree when movies are on (`private/third_party/trial/movie-real`, from out-m) and the stubs when off
+  (`movie-stub`).
+- **Why no picture decoded:** the game reads a movie's first chunk to learn its size, then calls `sceMpegCreate` again; the
+  stand-in started a fresh decoder, and the rest of the file carries no sequence header (EA's PSS files have one, at the
+  start). **Fix:** the stand-in keeps the last sequence header and puts it in front of a fresh decoder's data.
+- **Measured (PC, `PS2PORT_MOVIE_STUB=0`):** the EA logo and the WB splash decode in full (640x448 pictures, mean brightness
+  110 fading to 65, about 4.7 MB through `sceMpegDemuxPssRing`), and the boot goes on past them. **But the pictures do not reach
+  the screen:** the PC's frames are black (mean 0) from 12 s. The game hands each picture on through 0x2f8cf8 and 0x2f0c60;
+  the two picture pointers it passes (0xaca980, 0xacaa80) are only 256 bytes apart, while the stand-in writes a whole 1.1 MB
+  picture in its own macroblock-column layout (made for another game). Next: find how 0x2f0c60's consumer uploads the picture
+  (layout and size it expects), and why even the non-movie parts of the frame are black.
+- Movies stay stubbed by default; the play binary is unchanged (`66d69916`).

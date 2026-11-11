@@ -42,6 +42,13 @@ Phase reports live in `docs/PHASE_N.md`.
   (end of stream from the game's own stream state, drop the `0x171904` write); (5) thermal runs at 1.2/1.0 GHz with the
   fixed guard; (6) sticky pad presses for low-fps menus.
 
+**2026-11-11 (evening): movies decode on the PC, not yet shown.** Two fixes: `runner/gen.sh` swaps PS2Recomp's real movie
+functions into its tree when `PS2PORT_MOVIE_STUB=0` (eegen falls back to them for mid-function resumes; the stub there
+livelocked the setup), and the libmpeg stand-in reuses the last MPEG sequence header for a fresh decoder. EA logo and WB splash
+now decode in full; the frames stay black (picture layout / upload path not matched yet). EA MultiStream packet format and opcode
+map in `docs/PHASE_8.md`, "Movies decode on the PC". The user's decompile of `STREAM.IRX`: `private/third_party/trial/stream.irx.c`.
+Thread sampler (`PS2PORT_SAMPLE`) works on the PC runner now. Play binary still `66d69916`.
+
 **2026-11-11 (later): movies and sound, second look (PC).** Movie path stops in the setup's stream-feeder loop (0x2de818), not in
 the counter wait: EA's `STREAM.IRX` reads ~1.2 MB of `Q_ENG_US.PSS`, calls the EE back 62 times, then stops, while the EE polls it
 (336 times, reply -1): a stalled EA stream handshake. Sound: the mixer must stay on the IOP's clock (host time broke loading once),

@@ -272,7 +272,16 @@ namespace
 }
 
 // The PC runner's present loop (ps2_runtime.cpp, no display of ours): whether to save the frame it shows, and the saving
-bool ps2portShotWanted(double seconds) { return shotWanted(seconds); }
+namespace
+{
+    void sampling(double seconds); // below
+}
+// (the PC runner also samples threads from here, PS2PORT_SAMPLE: no display loop of ours runs there)
+bool ps2portShotWanted(double seconds)
+{
+    sampling(seconds);
+    return shotWanted(seconds);
+}
 void ps2portSaveShot(const uint8_t *rgba, uint32_t w, uint32_t h, const uint8_t *rdram, double seconds)
 {
     uint32_t mode = 0;
