@@ -20,6 +20,8 @@ VAR=VALUE ...`. "Private" means the code is in the PS2Recomp checkout under `pri
 | `PS2PORT_SHOT_DIR` | `/userdata/screenshots` (device), `private/screenshots` (PC) | Where Menu + L1 (device), Enter or SIGUSR1 (PC) save a PNG. | `display.cpp` |
 | `PS2PORT_SHOT_AT` | none | Screenshots at these seconds after start: `20,45`. | `display.cpp` |
 | `PS2PORT_REALTIME` | 1 | The EE's clock (and with it the IOP's: sound driver, SPU mixer, vblanks) follows the host's clock: when the EE thread runs slower than a PS2 or waits on the host, time jumps ahead (at most 100 ms at once); held while the game loads (mode 0). Sound at the right speed and pitch. 0: off (sound at the EE's pace, about half speed on the device). `=2`: the IOP keeps to the EE's own cycles (experiment). | private `EeScheduler.cpp` |
+| `PS2PORT_SPU_STARVE` | 1 | A voice that played a DMA-refilled ring (a streamed dialogue or music) and goes round it three times with no refill stops as at an end block, so a starved line ends instead of looping and the cutscene goes on. 0: off. | private IOP `iop_memory.cpp` |
+| `PS2PORT_SPU_REKEY` | off | 1: keep a second key-on of a voice still playing a streamed ring from the same start (dropped by default). | private IOP |
 | `PS2PORT_CD_LATENCY_US` | 2000 | When a CD read's completion callback runs on the IOP, in microseconds after the request (was 3.5 us). | private IOP |
 | `PS2PORT_MOVIE_DIRECT` | 1 | When EA's disc stream gives the movie decoder nothing, the decoder reads the movie file from the disc folder itself, 64 KB at a time, and hands the movie's sound packets to the game's audio callback. 0: off (the movie then waits for the stream, which stalls here). | private `MPEG.cpp` |
 | `GSGLES_PAL_EXPAND` | 1 | Palette textures drawn with the linear filter are expanded to RGBA once (one texture fetch instead of eight). 0: old shader path. | `gsgles/gs_gles_backend.cpp` |
@@ -52,6 +54,9 @@ VAR=VALUE ...`. "Private" means the code is in the PS2Recomp checkout under `pri
 | `PS2PORT_PEEK=0xA,0xB` | PC: guest words with each stats line (`PS2PORT_STATS=1`), also when game frames have stopped. | private runtime |
 | `PS2PORT_IOP_TRACE`, `PS2PORT_IOP_ALLOCS` | IOP RPC calls (with every MultiStream command of a packet, `[ee-rpc] cmds`), IOP modules as they load (`[iop] module`); IOP memory allocations. | private runtime and IOP |
 | `PS2PORT_IOP_PEEK=0xA,0xB` | PC: IOP words with each stats line (`PS2PORT_STATS=1`). | private runtime |
+| `PS2PORT_SPU_VOICES=1`, `PS2PORT_SPU_V01=1` | Playing voices (address, loop, flags, pitch) every 5 s of IOP time; core 0 voices 0 and 1 (the dialogue pair): key on/off, end blocks, ENVX changes. | private IOP |
+| `PS2PORT_IOP_WATCH16=ADDR` | IOP halfword stores to a physical address, with pc and ra (e.g. `0x1F9001A0`, key-on). | private IOP |
+| `PS2PORT_IOP_RPC_LATENCY=1` | IOP calls to the EE whose answer took over 20 ms of IOP time, and the stages of slow ones. | private IOP and runtime |
 | `PS2PORT_IOP_WATCH=0xA[,0xB...]` | Every IOP byte store to up to four addresses, with the IOP pc and ra (`[iop-watch]`). | private IOP |
 | `PS2PORT_IOP_SEMA=ID` | Every SignalSema of one IOP semaphore, with the caller. | private IOP |
 | `PS2PORT_SNAP_PC=0xADDR`, `PS2PORT_SNAP_NTH=N`, `PS2PORT_SNAP_FILE=FILE` | A snapshot of RAM and context the Nth time the EE reaches ADDR (replay harness input). | private runtime |

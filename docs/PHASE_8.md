@@ -548,3 +548,43 @@ Device binary: the device's own `runner-aarch64` of 2026-11-08 14:45 (md5 `17acd
   refuses packets (17 of 32). Next: find what moves that ring to the IOP and why it stops after one transfer.
 - Play binary `43407554` (stripped `runner-aarch64`; built, not run on the device); the previous one is kept as
   `runner-aarch64.a39c955f`.
+
+### Dialogue that loops, cutscenes that wait (2026-11-12, user's device test of `43407554`; PC at the device's pace)
+
+- **User report:** sound speed good now; sometimes a phrase is heard twice at its start; in Ollivanders "could I see" turned
+  into a repeated "could I", and the game never went on ("infinite loading"). Device log `play-233551`: last stream opened
+  `CUT\HPM04A.HOG`.
+- **What the sound chip was doing (`PS2PORT_SPU_VOICES=1`):** the dialogue plays on core 0's voices 0 and 1 (44.1 kHz stereo),
+  each from an 8 KB ring in SPU memory (two 4 KB halves, 163 ms each) that EA's `STREAM.IRX` refills as the voice leaves a half
+  (`FUN_0000f5a8` reads the voice's NAX every timer tick). At a stall the voices go round their ring for good: 8 KB is 0.33 s,
+  the repeated "could I". Every stream channel in `STREAM.IRX` is closed by then; nothing refills and nothing stops the voices,
+  and the cutscene waits for the line to end.
+- **Why (`PS2PORT_SPU_V01=1`, `PS2PORT_IOP_WATCH16=0x1F9001A0`):** the voices are keyed on twice. The stream path keys them on
+  when the first data is in and a start was requested (`FUN_0000b468`, IOP ra 0x58bd8 / 0x58914), and leaves the request set;
+  the EE's next command then keys them on again (`FUN_0000c9c0`, ra 0x59c78 / 0x59890), 0.2 to 9 s later. The second key-on
+  restarts the voice at its first block (the first phrase twice) and the module's refill bookkeeping no longer matches it.
+  With a PS2's EE the command comes before the stream starts, and there is only one key-on; with our slow EE it often comes
+  after.
+- **Also found on the way:** the IOP's calls to the EE (`sceSifCallRpc` to EA's server) were answered 27-30 ms of IOP time
+  late (the EE takes them at its next dispatch), once 219 ms, longer than a half-buffer. Now the IOP may run on at most 8 ms
+  of its own time while such a reply is pending, then waits (`iop_emulator.cpp`, `ps2portIopAwaitEe`); a reply is handed over
+  without first catching the IOP up with the EE (`Ps2portIopGuard::NoCatchUp`). PC at the device's pace: 0 replies over
+  20 ms (594 before); boot time unchanged. Not by itself the fix: the stalls went on.
+- **Double key-ons are not the cause by themselves:** they come at the start of every line, also of lines that end well. A
+  rule that drops a key-on of a voice still playing a streamed ring from the same start (its first block rewritten by DMA since
+  it started) stays in (`PS2PORT_SPU_REKEY=1` keeps every key-on; logged as `[spu] ... second key-on of streamed voice ...
+  dropped`); it did not end the stalls.
+- **Fix in place: a starved stream ends** (`iop_memory.cpp`, `PS2PORT_SPU_STARVE=0` turns it off). A voice that has been playing
+  a ring refilled by DMA and then goes round it three times with no refill (about 1 s for a dialogue) stops as at an end block:
+  ENDX set, ENVX 0, logged as `[spu] ... went round its stream ring 3 times without a refill: ended`. Sound effects and looping
+  samples are never refilled while they play, and a paused voice does not go round, so they are not touched. The cost: the
+  stuck line's last moment is cut instead of looping.
+- **Measured (PC at the device's pace, New Game, no input):** before, the cutscenes stopped in HPM02, HPM03 or HPM04A in every
+  run (about 8 runs); with the rule, 2 of 2 runs went HPM02 -> HPM03 -> HPM04A -> mode 2 -> mode 5 (play) at 215-216 s, the rule
+  firing twice in each. Why `STREAM.IRX` stops feeding is still not known; the rule covers the symptom.
+- **New switches and logs:** `PS2PORT_SPU_VOICES=1` (playing voices every 5 s), `PS2PORT_SPU_V01=1` (core 0 voices 0 and 1:
+  key on/off, end blocks, ENVX changes), `PS2PORT_IOP_WATCH16=ADDR` (IOP halfword stores, e.g. KON at 0x1F9001A0),
+  `PS2PORT_IOP_RPC_LATENCY=1` (IOP calls to the EE that took long, and their stages).
+- At full PC speed the rule fires at the same two line endings (the voice used to loop about 1 s past the line before the game
+  went on regardless); play still reached at 182 s, the mix at 100 %. Play binary `e8bb5fa6` (stripped `runner-aarch64`; built,
+  not run on the device); the previous one is kept as `runner-aarch64.43407554`.

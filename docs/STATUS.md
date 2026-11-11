@@ -30,9 +30,9 @@ movies and the later chapters are left.
 
 1. **The user's tests** (device): stick, lag, Menu + L1, `docs/VISUAL_CHECKLIST.md`, `sh scripts/install_port.sh` and the Ports
    entry. Read the play log's `[lag]` and `[pad]` lines afterwards.
-2. **Cutscenes that never end** (at the device's pace on the PC, `PS2PORT_SLOWDOWN=60`): one cause fixed (the stream race,
-   `docs/PHASE_8.md`, "Sound speed, cutscenes that never end"); a second remains: an IOP-side sound stream stops refilling as
-   the cutscene's data stream ends (HPM02 or HPM03). Measure with `runner/try_sound.sh` and `PS2PORT_IOP_TRACE=1`.
+2. **Cutscenes that never end:** the stream race fixed, and a starved dialogue stream now ends instead of looping
+   (`PS2PORT_SPU_STARVE`); PC at the device's pace goes through all New Game cutscenes. Device check pending. Why EA's
+   `STREAM.IRX` stops feeding a dialogue is still unknown (`docs/PHASE_8.md`, "Dialogue that loops").
 3. **Frame time** (device): profile the shop (`PS2PORT_SAMPLE`), the game thread first.
 4. **Movies:** pictures play (PC); left: the user's visual check, decode cost on the device, movie sound, and why EA's
    `STREAM.IRX` stops refilling (`docs/PHASE_8.md`, "Movie pictures on screen").

@@ -42,6 +42,14 @@ Phase reports live in `docs/PHASE_N.md`.
   (end of stream from the game's own stream state, drop the `0x171904` write); (5) thermal runs at 1.2/1.0 GHz with the
   fixed guard; (6) sticky pad presses for low-fps menus.
 
+**2026-11-12: dialogue that loops, cutscenes that wait.** User's device test of `43407554`: sound speed good; sometimes a phrase
+heard twice at its start; Ollivanders "could I see" looped as "could I" and the game never went on. The dialogue voices (core 0
+voices 0/1) loop their 8 KB ring when EA's `STREAM.IRX` stops refilling it (cause inside the module not found; double key-ons at
+each line start are not it). Fix: a starved stream ends (`PS2PORT_SPU_STARVE`, on): a voice that played a DMA-refilled ring and
+goes round it 3 times unrefilled stops as at an end block. PC at device pace: 2 of 2 runs through all New Game cutscenes to play
+(0 of ~8 before). Also: IOP→EE replies bounded (IOP runs at most 8 ms of its time while one is pending), reply handed over without
+catch-up. Play binary `e8bb5fa6` (built, not run on the device; previous `runner-aarch64.43407554`). Details `docs/PHASE_8.md`, "Dialogue that loops, cutscenes that wait".
+
 **2026-11-11 (night): sound speed and the stream race (PC).** User (device, `a39c955f`): movies work but silent, sound slow,
 cutscenes sometimes never end. (1) Sound: the IOP's clock is the EE's, which stopped while the EE thread waited on the host
 (frame-end VIF1/GIF/VU1 wait behind `ps2portGsAcquire`); `PS2PORT_REALTIME` now on by default: PC at device pace

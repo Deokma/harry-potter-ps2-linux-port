@@ -61,8 +61,9 @@ device's menu, and playing through the rest to fix what later chapters break.
 ## Open, in rough order
 
 1. **Player's checks:** stick, input lag, Menu + L1, the visual checklist for chapter slice 1, the Ports launcher's first start.
-2. **Cutscenes that sometimes never end:** one cause fixed (a race in the IOP emulation that lost EA's stream go-on); a second
-   stall remains at the device's pace. Then movie sound (silent).
+2. **Cutscenes that sometimes never end:** a race in the IOP emulation fixed, and a dialogue whose stream starves now ends
+   instead of looping; the PC at the device's pace plays through the New Game cutscenes. Device check pending. Then movie sound
+   (silent).
 3. **Frame time** in play: back toward 33 ms. The game thread is the limit in Ollivanders, then VU1 and GS parsing. A faster
    EE also fixes sound.
 4. **Heat:** runs at lower CPU clocks, less work a frame.
