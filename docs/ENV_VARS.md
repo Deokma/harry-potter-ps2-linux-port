@@ -19,6 +19,7 @@ VAR=VALUE ...`. "Private" means the code is in the PS2Recomp checkout under `pri
 | `PS2PORT_NO_SOUND` | off | 1: the SPU mixes nothing at all. | private IOP |
 | `PS2PORT_SHOT_DIR` | `/userdata/screenshots` (device), `private/screenshots` (PC) | Where Menu + L1 (device), Enter or SIGUSR1 (PC) save a PNG. | `display.cpp` |
 | `PS2PORT_SHOT_AT` | none | Screenshots at these seconds after start: `20,45`. | `display.cpp` |
+| `PS2PORT_MOVIE_DIRECT` | 1 | When EA's disc stream gives the movie decoder nothing, the decoder reads the movie file from the disc folder itself (pictures only; the movie's own sound stays silent). 0: off (the movie then waits for the stream, which stalls here). | private `MPEG.cpp` |
 | `GSGLES_PAL_EXPAND` | 1 | Palette textures drawn with the linear filter are expanded to RGBA once (one texture fetch instead of eight). 0: old shader path. | `gsgles/gs_gles_backend.cpp` |
 | `GPU_MIN_HZ` | 648000000 | The GPU's minimum clock for a device session (its governor otherwise stays at 240 MHz). 0: leave it. | `runner/device_play.sh`, `device_panel.sh` |
 
@@ -36,7 +37,7 @@ VAR=VALUE ...`. "Private" means the code is in the PS2Recomp checkout under `pri
 | `PS2PORT_GSDUMP=FILE:START:VSYNCS` | A GS dump in PCSX2's format (for `gsplay`), from START seconds, for VSYNCS frames. | private `gs_frontend.cpp` |
 | `PS2PORT_VU1_LOG=1` | VU1 program entries per frame. | `display.cpp` |
 | `PS2PORT_SPU_PCM=FILE` | The sound mix as raw 16-bit stereo 48 kHz PCM (also how to measure the mix rate on the PC). | private IOP |
-| `PS2PORT_MPEG_LOG=1` | The first 64 libmpeg events of each kind (callbacks registered, no-data callback calls, DemuxPssRing, GetPicture). | private `MPEG.cpp` |
+| `PS2PORT_MPEG_LOG=1` | libmpeg events: the first 64 of each kind, then every 64th (callbacks registered, no-data callback calls, DemuxPssRing, GetPicture, decoded pictures with their mean colour, the end flag, reading from the disc folder). | private `MPEG.cpp` |
 | `PS2PORT_SPU_DEBUG=1`, `PS2PORT_SPU_TRACE=1` | What goes into each SPU core's mix; SPU2 and DMA register use. | private IOP |
 | `PS2PORT_NATIVE_STATS=1` | How calls into eegen's and the vector units' native code went, at exit. | `runner/native_hooks.cpp` |
 | `PS2PORT_THROW_LOG=1` | Who throws C++ exceptions (the runtime and the IOP swallow many). | `display.cpp` |
@@ -44,7 +45,9 @@ VAR=VALUE ...`. "Private" means the code is in the PS2Recomp checkout under `pri
 | `PS2PORT_STATS=1`, `PS2PORT_THREADS=1`, `PS2PORT_TIMESHARE=FILE`, `PS2PORT_CALLCOUNT=FILE` | PC runs: present and DMA counters; EE threads and semaphores; host time per guest function; every function entry. | private runtime |
 | `PS2PORT_GIF_LOG=FILE`, `PS2PORT_GIF_RAW=FILE:FROM:COUNT` | GIF packets as a log; the packets themselves. | private `ps2_memory.cpp` |
 | `PS2PORT_PEEK=0xA,0xB` | PC: guest words with each stats line (`PS2PORT_STATS=1`), also when game frames have stopped. | private runtime |
-| `PS2PORT_IOP_TRACE`, `PS2PORT_IOP_ALLOCS` | IOP RPC calls; IOP memory allocations. | private runtime and IOP |
+| `PS2PORT_IOP_TRACE`, `PS2PORT_IOP_ALLOCS` | IOP RPC calls (with every MultiStream command of a packet, `[ee-rpc] cmds`), IOP modules as they load (`[iop] module`); IOP memory allocations. | private runtime and IOP |
+| `PS2PORT_IOP_PEEK=0xA,0xB` | PC: IOP words with each stats line (`PS2PORT_STATS=1`). | private runtime |
+| `PS2PORT_IOP_SEMA=ID` | Every SignalSema of one IOP semaphore, with the caller. | private IOP |
 | `PS2PORT_SNAP_PC=0xADDR`, `PS2PORT_SNAP_NTH=N`, `PS2PORT_SNAP_FILE=FILE` | A snapshot of RAM and context the Nth time the EE reaches ADDR (replay harness input). | private runtime |
 
 ## Test runs (scripted, nobody at the pad)
@@ -64,6 +67,7 @@ VAR=VALUE ...`. "Private" means the code is in the PS2Recomp checkout under `pri
 |---|---|---|
 | `PS2PORT_IOP_REALTIME=1` | The IOP (sound driver, SPU) follows the host's clock in play modes (2-5) while the EE keeps its own. Sound at 45-47 k of 48 k samples a second on the PC at half speed (10.7 k without). | The next load after the menus crawls (the stream library needs the IOP in phase with the EE). Not for play. |
 | `PS2PORT_REALTIME=1` (`=2`: IOP apart) | The EE's cycle count follows the host's clock; held during loads; a jump is at most 100 ms. | Loads slow down and a cutscene skip was lost in one PC run. Not for play. |
+| `PS2PORT_IOP_REALTIME=2` | The IOP's clock is never held for the EE (`=1` holds it during loads). | Tried for the movie stream stall: no change. |
 | `PS2PORT_IOP_THREAD=0`, `PS2PORT_GS_THREAD=0`, `PS2PORT_GS_DRAW_THREAD=0` | Run the IOP, the GS side (stage A) or GS drawing (stage B) on the game's thread, as PS2Recomp did. | For bisecting. |
 | `PS2PORT_NO_EG=1`, `PS2PORT_NO_VU0=1`, `PS2PORT_NO_VU1=1`, `PS2PORT_EG_FROM/TO=HEX`, `PS2PORT_NO_EG_RESUME=1` | Turn eegen's code or the translated vector units off (or limit eegen to a range) and use PS2Recomp's code or interpreter instead. | For bisecting a difference. |
 
@@ -73,7 +77,7 @@ VAR=VALUE ...`. "Private" means the code is in the PS2Recomp checkout under `pri
 |---|---|---|
 | `PS2PORT_HW_SEMANTICS=sqrt,cvt,branch,lqsq` | Which of the R5900's own semantics eegen uses where PS2Recomp's differ (default all four). | `runner/gen.sh` |
 | `PS2PORT_PS2RECOMP_SEMANTICS=1` | PS2Recomp's semantics, as the replay harness expects. | `runner/gen.sh` |
-| `PS2PORT_MOVIE_STUB` | 1 (default): the five movie functions are stubbed; 0 builds the movie path, which stops in the first movie's setup (`docs/PHASE_8.md`). | `runner/gen.sh` |
+| `PS2PORT_MOVIE_STUB` | 0 (default since 2026-11-11): movies play. 1: the five movie functions are stubbed (no movies, black menu background), as before. | `runner/gen.sh` |
 | `PS2PORT_RUNNER=PATH` | PC: which runner `scripts/ps2recomp_trial.sh boot` starts (`runner/try.sh` sets it). | `scripts/ps2recomp_trial.sh` |
 
 ## Device scripts

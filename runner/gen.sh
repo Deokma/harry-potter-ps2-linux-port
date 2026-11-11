@@ -17,11 +17,11 @@ awk -F, 'NR > 1 { print $2 }' "$t/function_map.csv" > "$out/functions.txt"
     grep -l 'ps2_stubs::\|ps2_syscalls::' "$t"/out-b/FUN_*.cpp | sed -E 's/.*FUN_([0-9a-f]{8})_.*/0x\1/'
 } | awk '{ print $1 }' | sort -u > "$out/native.txt"
 
-# The movie stub is the default (2026-11-10: without it the runner stops in the first movie); PS2PORT_MOVIE_STUB=0 for the movie work.
-# Movies play since Phase 8 (FFmpeg in the libmpeg stand-in). PS2PORT_MOVIE_STUB=1: the old stub, which replaces these in
+# Movies play by default since 2026-11-11 (FFmpeg in the libmpeg stand-in, which reads a movie from the disc folder once EA's
+# stream starves; docs/PHASE_8.md, "Movie pictures on screen"). PS2PORT_MOVIE_STUB=1: the old stub, which replaces these in
 # PS2Recomp's output (scripts/ps2recomp_movie_stub.py, run on trial/out-b and the runtime's runner folder too)
 skip=""
-[ "${PS2PORT_MOVIE_STUB:-1}" = 1 ] && skip=0x2dd8e0,0x2dc868,0x2dcc98,0x2de1e8,0x2dc738
+[ "${PS2PORT_MOVIE_STUB:-0}" = 1 ] && skip=0x2dd8e0,0x2dc868,0x2dcc98,0x2de1e8,0x2dc738
 floats="--no-float-groups"
 [ "${1:-}" = groups ] && floats=""
 # The R5900's own semantics where PS2Recomp's output differs (2026-11-10): sqrt.s takes ft (PS2Recomp read fs: 16 of the game's 35
@@ -37,7 +37,7 @@ python3 -I eegen/eegen.py "$elf" "$t/function_map.csv" "$out/eg.new" --functions
 # resumes only at loop heads): the stubs when movies are stubbed, PS2Recomp's real code otherwise (2026-11-11: with the stub
 # there, the movie setup livelocked at 0x2dda30). Copies in trial/movie-stub and trial/movie-real (from out-m).
 movies=$t/movie-real
-[ "${PS2PORT_MOVIE_STUB:-1}" = 1 ] && movies=$t/movie-stub
+[ "${PS2PORT_MOVIE_STUB:-0}" = 1 ] && movies=$t/movie-stub
 for f in "$movies"/FUN_*.cpp; do
     cmp -s "$f" "$tp/PS2Recomp/ps2xRuntime/src/runner/$(basename "$f")" || cp "$f" "$tp/PS2Recomp/ps2xRuntime/src/runner/"
 done

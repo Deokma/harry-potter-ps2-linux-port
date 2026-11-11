@@ -463,3 +463,37 @@ Device binary: the device's own `runner-aarch64` of 2026-11-08 14:45 (md5 `17acd
   picture in its own macroblock-column layout (made for another game). Next: find how 0x2f0c60's consumer uploads the picture
   (layout and size it expects), and why even the non-movie parts of the frame are black.
 - Movies stay stubbed by default; the play binary is unchanged (`66d69916`).
+
+### Movie pictures on screen; movies on by default (2026-11-11, PC; nothing run on the device)
+
+- **Why the frames were black:** the game's video stream callback (registered with `sceMpegAddStrCallback`) is what tells it the
+  picture's width and height. The stand-in queued it as a guest invocation and returned from `sceMpegDemuxPssRing` at once, so
+  `sceMpegGetPicture` ran before the callback with a 0x0 picture and the game sized its buffers 0 bytes. **Fix:**
+  `sceMpegDemuxPssRing` now waits (`waitExternal`, wait type 2 on the mpeg's address) until every stream callback it queued has
+  returned, as libmpeg does on the console. After this the pictures land in the game's buffers (0xc05980, 0xd1e980; 286,720
+  macroblock bytes each) and the PC's frames show them (lit 54 %, mean 66 from 13 s in `boot-20261111-131839`).
+- **Why the movies starved after the first chunk:** the EE asks EA's `STREAM.IRX` to go on (command `51(5, ch)`; the go-on flag
+  in the IOP at `0x4ca00 + ch*0x254 + 0x18144` reads 1 afterwards), but the module's stream thread (IOP thread 7, entry
+  0x4fe74, waiting on semaphore 4 at 0x4fee8) never issues the next `sceCdRead`. Not understood; the IOP's clock is not the
+  cause (`PS2PORT_IOP_REALTIME=2`, never held, changed nothing). New tools for it: `PS2PORT_IOP_PEEK` (IOP words with the PC
+  stats), `PS2PORT_IOP_SEMA=ID` (every SignalSema of one semaphore), `[iop] module NAME at BASE` with `PS2PORT_IOP_TRACE`
+  (`STREAM.IRX` loads at 0x4ca00: offsets in the user's decompile plus 0x4ca00).
+- **Pragmatic fix (`PS2PORT_MOVIE_DIRECT`, on):** the RPC layer sees every MultiStream open (opcode 0x1f) and tells the stand-in
+  the path of each `.PSS` file. When the game's no-data callback has fed nothing, the stand-in reads the movie from the disc
+  folder itself, from the offset already decoded, 256 KB at a time, until the decoder has a picture; at the end of the file it
+  ends the stream, flushes the decoder and sets the end flag the game's `sceMpegIsEnd` reads. From then on the bytes the game
+  demuxes are taken and dropped so nothing is decoded twice. **Cost: a movie's own sound is silent** (it comes through the game's
+  demux and stream callbacks); the game's stream still runs beside it.
+- **Measured (PC, `boot-20261111-143910`, 170 s, CROSS at 5 s, START at the title):** EA logo 75 pictures and WB splash 203
+  pictures decode and end with the end flag; the title screen (mode 9) at 58 s; START; the main menu (mode 2) at 98 s with
+  `FRONTEND.PSS` behind it; after about 30 s idle in the menu the game opens `PS_TRAIL.PSS` (its attract trailer) and that plays
+  too. Frame numbers (every 30th vsync, `scripts/frame_stats_ppm.py`): menu frames 86-90 % lit, mean 51-54, 14-41 % of pixels
+  changed between samples 3 s apart (the moving background); the stub build's menu background was black. Trailer frames 67-80 %
+  lit, 43-97 % changed. Loading after START (72-95 s) stays dark (2-3 % lit), as before.
+- **Unchecked:** whether the picture is placed and coloured right (the stand-in writes its own macroblock-column layout, made for
+  another game; the numbers only say something bright and moving fills the screen) - the user's check (`docs/VISUAL_CHECKLIST.md`).
+  Decode cost on the device: FFmpeg's MPEG-2 decoder and the colour conversion run on the game thread inside
+  `sceMpegGetPicture`; not measured on the device.
+- **Default changed:** `runner/gen.sh` now builds the movie path (`PS2PORT_MOVIE_STUB=0`); `PS2PORT_MOVIE_STUB=1` brings the stub
+  back. Movie sound, and the stream stall itself, stay open. Play binary `a39c955f` (stripped `runner-aarch64`; built, not run on
+  the device); the previous one is kept as `runner-aarch64.66d69916`.

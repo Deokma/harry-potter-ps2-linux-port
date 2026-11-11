@@ -42,6 +42,14 @@ Phase reports live in `docs/PHASE_N.md`.
   (end of stream from the game's own stream state, drop the `0x171904` write); (5) thermal runs at 1.2/1.0 GHz with the
   fixed guard; (6) sticky pad presses for low-fps menus.
 
+**2026-11-11 (late): movie pictures on screen (PC); movies on by default.** Stream callbacks now finish before
+`sceMpegDemuxPssRing` returns (pictures had 0x0 size), and when EA's stream starves the libmpeg stand-in reads the `.PSS` from the
+disc folder itself (`PS2PORT_MOVIE_DIRECT`, on; movie sound silent). PC boot: EA logo, WB splash, title, START, main menu with
+`FRONTEND.PSS` moving behind it (86-90 % lit; was black), attract trailer after 30 s idle. `runner/gen.sh` default
+`PS2PORT_MOVIE_STUB=0`. Unchecked: picture layout/colours (user's visual check), decode cost on the device. Play binary now `a39c955f`
+(movies on; built, not run on the device); the previous one is `build-m2/aarch64/runner-aarch64.66d69916`. Details
+`docs/PHASE_8.md`, "Movie pictures on screen".
+
 **2026-11-11 (evening): movies decode on the PC, not yet shown.** Two fixes: `runner/gen.sh` swaps PS2Recomp's real movie
 functions into its tree when `PS2PORT_MOVIE_STUB=0` (eegen falls back to them for mid-function resumes; the stub there
 livelocked the setup), and the libmpeg stand-in reuses the last MPEG sequence header for a fresh decoder. EA logo and WB splash

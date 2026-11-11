@@ -21,7 +21,7 @@ movies and the later chapters are left.
 | Saves | 90 % | Write, restart, Continue measured on the device. Save time shows 6 h off (clock stub's time zone). |
 | Game speed | 95 % | The logic ticks at 25.0 a second (measured): real time. |
 | Sound | 35 % | Plays, but at 24-28 k of 48 k samples a second (the IOP follows the slow EE): slow and low. |
-| Movies | 20 % | Decoder built, stubbed in the runner (the runner stops in the first movie). |
+| Movies | 60 % | Pictures play on the PC (logos, menu background, trailer), read from the disc folder because EA's stream stalls; movie sound silent; not run on the device. |
 | Frame time | 50 % | 55-67 ms in Ollivanders with the full picture (15-18 a second). |
 | Heat | 40 % | 85 C after 5-13 minutes at 1.416 GHz; the session stops there. |
 | Launching | 50 % | `sh scripts/play.sh` over SSH works; the Ports launcher is written but has not run on the device. |
@@ -35,8 +35,8 @@ movies and the later chapters are left.
    measure on the PC with `PS2PORT_SLOWDOWN=50 PS2PORT_SPU_PCM=FILE` (bytes / 4 / seconds = samples a second) and the New Game
    load time (mode 0 to 9: 38 s at half speed, 7 s at full).
 3. **Frame time** (device): profile the shop (`PS2PORT_SAMPLE`), the game thread first.
-4. **Movies** (PC first): the libmpeg stand-in waits for CD stream counters that the game's IOP streaming never sets
-   (`docs/PHASE_8.md`, "Movies, first PC test").
+4. **Movies:** pictures play (PC); left: the user's visual check, decode cost on the device, movie sound, and why EA's
+   `STREAM.IRX` stops refilling (`docs/PHASE_8.md`, "Movie pictures on screen").
 5. **Play through**, chapter by chapter, from saves.
 6. **Heat:** sessions at 1.2 and 1.0 GHz.
 

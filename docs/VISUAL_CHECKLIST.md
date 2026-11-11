@@ -33,9 +33,10 @@ Times are from device runs on 2026-11-10 with nobody skipping; they move by a fe
 
 | # | Scene | When | Look at | Reference | Known issue | User's notes |
 |---|---|---|---|---|---|---|
+| 0 | EA logo and WB splash movies | 8-30 s after start | picture fills the screen, not shifted, split or striped; colours (EA logo blue/white, WB shield gold); smooth motion | PCSX2, F8 | movie sound silent (2026-11-11 movie build) | |
 | 1 | Language screen | 5-20 s; stays until Cross | flag, castle silhouette, the two languages, button hint | PCSX2, F8 | none known | |
-| 2 | Opening narration ("There was nothing about the starry sky...") | from ~21 s (mode 9); Start skips it | sky, stars, trees, subtitle text and timing | PCSX2, F8 | plays without the movie parts (movie stub) | |
-| 3 | Main menu (New Game, Continue, Options, Language) | after the narration or Start, ~24 s | logo, four entries, highlight, background | PCSX2, F8 | background is black here: not known whether PCSX2 shows more | |
+| 2 | Opening narration ("There was nothing about the starry sky...") | from ~21 s (mode 9); Start skips it | sky, stars, trees, subtitle text and timing | PCSX2, F8 | movie parts back since the 2026-11-11 build; check they show | |
+| 3 | Main menu (New Game, Continue, Options, Language) | after the narration or Start, ~24 s | logo, four entries, highlight, background | PCSX2, F8 | moving `FRONTEND.PSS` background since the 2026-11-11 build (was black); after ~30 s idle the game plays its trailer (`PS_TRAIL.PSS`), sound silent | |
 | 4 | Load-game screen ("Select a Game to Load") | Main menu, Down, Cross | fog moving behind the list, save line, button hints | PCSX2, F8 | fog was slow (16 frames a second), now about 44; date shows 6 h off | |
 | 5 | Loading screen (castle, progress bar) | after choosing a save or New Game | castle picture, bar filling smoothly | PCSX2, F8 | none known | |
 | 6 | New Game cutscenes: Hagrid and the baby, Privet Drive | New Game, ~25-60 s in | faces, textures, subtitles, the car and houses | PCSX2, F8 | none known | |
