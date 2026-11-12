@@ -9,11 +9,25 @@ pad=$2
 at=$3
 [ "$#" -ge 3 ] && shift 3 || shift "$#"
 cd "$(dirname "$0")" || exit 1
+# GPU_MIN_HZ=N and CPU_GOV=NAME among the VAR=VALUE are this script's (as in device_play.sh), not the runner's
+ghz=${GPU_MIN_HZ:-648000000}
+gov=${CPU_GOV:-}
+n=$#
+while [ "$n" -gt 0 ]; do
+    a=$1
+    shift
+    n=$((n - 1))
+    case $a in
+        GPU_MIN_HZ=*) ghz=${a#GPU_MIN_HZ=} ;;
+        CPU_GOV=*) gov=${a#CPU_GOV=} ;;
+        *) set -- "$@" "$a" ;;
+    esac
+done
+[ -n "$gov" ] && echo "$gov" > /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null
 # The GPU's devfreq governor (simple_ondemand) stays at 240 MHz under this load: raise the minimum to the maximum for the run and
 # put it back after (GPU_MIN_HZ=0 leaves it alone). At 240 MHz the load-game screen's fog took 58 ms of GPU a frame.
 gdev=/sys/class/devfreq/gpu
 gold=$(cat $gdev/min_freq 2>/dev/null)
-ghz=${GPU_MIN_HZ:-648000000}
 [ -n "$gold" ] && [ "$ghz" != 0 ] && { echo "$ghz" > $gdev/min_freq; trap 'echo "$gold" > $gdev/min_freq' EXIT; trap 'exit 143' TERM INT HUP; }
 d=panel-$(date +%H%M%S)
 mkdir -p "$d/frames"
@@ -28,7 +42,8 @@ start=$(date +%s)
 # seconds, CPU kHz, cooling state of the CPU (0 = none, 8 = most), CPU zone temperature, then the cpu0-3 lines of /proc/stat joined by |
 # (per-core load: scripts/core_load.py).
 # After the temperature: the runner's RssAnon and RssFile and the resident size of its Mali mappings (/dev/mali*), in kB.
-( while :; do p=$(pidof runner-aarch64 | cut -d' ' -f1); m="0 0 0"; [ -n "$p" ] && m="$(awk '/^RssAnon|^RssFile/ {printf "%s ", $2}' /proc/$p/status) $(awk '/^[0-9a-f]+-/ {k = ($6 ~ /mali/)} k && /^Rss:/ {s += $2} END {print s + 0}' /proc/$p/smaps)"; echo "$(($(date +%s) - start)) $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq) $(cat /sys/class/thermal/cooling_device0/cur_state) $(cat /sys/class/thermal/thermal_zone0/temp) $m $(grep '^cpu[0-9]' /proc/stat | tr '\n' '|')"; sleep 2; done ) > "$d/freq.txt" 2>/dev/null &
+# The Mali figure (a walk of smaps, tens of ms on the A53) only every 30 s; in between the line repeats the last (2026-11-12).
+( k=0; mali=0; while :; do p=$(pidof runner-aarch64 | cut -d' ' -f1); m="0 0 0"; [ -n "$p" ] && { [ $((k % 15)) = 0 ] && mali=$(awk '/^[0-9a-f]+-/ {k = ($6 ~ /mali/)} k && /^Rss:/ {s += $2} END {print s + 0}' /proc/$p/smaps); m="$(awk '/^RssAnon|^RssFile/ {printf "%s ", $2}' /proc/$p/status) $mali"; }; k=$((k + 1)); echo "$(($(date +%s) - start)) $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq) $(cat /sys/class/thermal/cooling_device0/cur_state) $(cat /sys/class/thermal/thermal_zone0/temp) $m $(grep '^cpu[0-9]' /proc/stat | tr '\n' '|')"; sleep 2; done ) > "$d/freq.txt" 2>/dev/null &
 fpid=$!
 # Memory: every 30 s the runner's eight largest mappings by resident size (maps.txt); above RSS_LIMIT_KB of anonymous memory
 # (default 420000; the device has 973 MB and the kernel's OOM killer took the runner at 480 MB) the runner is stopped first.
