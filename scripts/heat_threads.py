@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Per-thread CPU, wakeups and context switches of a running process, over time windows (Linux /proc; PC or device).
 
-  python3 -I scripts/heat_threads.py PID_OR_NAME WINDOWS [--out FILE] [--wait S]
+  python3 -I scripts/heat_threads.py PID_OR_NAME WINDOWS [--out FILE] [--wait S] [--exe PATH_PART]
 
-PID_OR_NAME: a pid, or a process name (comm, e.g. runner) to wait for (up to --wait seconds, default 60).
+PID_OR_NAME: a pid, or a process name (comm, e.g. runner) to wait for (up to --wait seconds, default 60): the first one that starts
+after this script and, with --exe, whose executable's path contains PATH_PART (other workers' runners have the same name).
 WINDOWS: comma-separated FROM-TO pairs in seconds since the process started, e.g. 40-70,225-265.
 For each window and each thread (threads of the same name are summed, with a count) it prints:
   cpu %      CPU time over wall time, from schedstat (ns; utime+stime ticks when schedstat is missing)
@@ -20,18 +21,26 @@ import sys
 import time
 
 
-def find_pid(name, wait):
+def find_pid(name, wait, exe=None):
+    """A pid, or the first process named NAME that starts after this script (and whose executable path contains EXE): other
+    workers on the same machine run processes of the same name."""
     if name.isdigit():
         return int(name)
-    end = time.time() + wait
+    began = time.time()
+    end = began + wait
     while time.time() < end:
         for d in os.listdir("/proc"):
             if not d.isdigit():
                 continue
             try:
                 with open(f"/proc/{d}/comm") as f:
-                    if f.read().strip() == name:
-                        return int(d)
+                    if f.read().strip() != name:
+                        continue
+                if exe and exe not in os.readlink(f"/proc/{d}/exe"):
+                    continue
+                if start_seconds(int(d)) < began - 1.0:
+                    continue
+                return int(d)
             except OSError:
                 pass
         time.sleep(0.2)
@@ -125,10 +134,15 @@ def main():
         i = args.index("--wait")
         wait = float(args[i + 1])
         del args[i:i + 2]
+    exe = None
+    if "--exe" in args:
+        i = args.index("--exe")
+        exe = args[i + 1]
+        del args[i:i + 2]
     if len(args) != 2:
         print(__doc__)
         sys.exit(2)
-    pid = find_pid(args[0], wait)
+    pid = find_pid(args[0], wait, exe)
     if pid is None:
         print(f"no process {args[0]}")
         sys.exit(1)

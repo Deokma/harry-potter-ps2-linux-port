@@ -735,6 +735,10 @@ uint64_t ps2portFrameRecorded();
 void ps2portFrameRegs(uint64_t flip, uint64_t out[7]);
 void ps2portFrameShown(uint64_t flip);
 uint64_t ps2portFrameSyncCounts(int which);
+// Heat (2026-11-12, docs/PHASE_9_HEAT.md): the main thread sleeps until stage B records a flip or wants a latch, instead of looking
+// every 0.5 ms. ps2_memory.cpp counts those events and wakes the waiter; without that (an older runtime) the poll stays.
+uint64_t ps2portFrameRecordedEvents() __attribute__((weak));
+void ps2portFrameWaitEvent(uint64_t seen, uint32_t timeoutUs) __attribute__((weak));
 
 bool ps2portDisplayInit(PS2Runtime &runtime)
 {
@@ -782,17 +786,56 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
             return tick != last;
         return recorded != takenFlip || (tick != last && nowMs() - lastFlipAt > 100.0);
     };
-    for (int spins = 1; !due() && nowMs() - waitStart < 50.0; ++spins)
+    // Waiting for something to show (heat work, 2026-11-12). With the runtime's event (ps2portFrameWaitEvent) the thread sleeps until
+    // a flip is recorded or stage B wants a latch, waking only to read the pad every PS2PORT_PAD_POLL_MS (default 4: a short tap is
+    // not missed between two frames); without it, it looks every PS2PORT_DISPLAY_POLL_US (default 500), as before.
+    // PS2PORT_PRESENT_CAP=N: at most N presents a second (0, the default: no cap). A frame that comes sooner waits, and the display
+    // stays "busy" meanwhile, so the game waits at its next flip (frame sync) instead of drawing frames nobody sees: menus and loading
+    // screens that flip 60 times a second do half the work at 30. Stage B wanting a latch is never held back.
+    static const bool hooked = ps2portFrameRecordedEvents && ps2portFrameWaitEvent;
+    static const double pollMs = std::clamp(std::getenv("PS2PORT_DISPLAY_POLL_US") ? std::atof(std::getenv("PS2PORT_DISPLAY_POLL_US")) : 500.0, 50.0, 20000.0) / 1000.0;
+    static const double padMs = std::clamp(std::getenv("PS2PORT_PAD_POLL_MS") ? std::atof(std::getenv("PS2PORT_PAD_POLL_MS")) : 4.0, 1.0, 50.0);
+    static const double capMs = std::getenv("PS2PORT_PRESENT_CAP") && std::atof(std::getenv("PS2PORT_PRESENT_CAP")) > 0.0 ? 1000.0 / std::atof(std::getenv("PS2PORT_PRESENT_CAP")) : 0.0;
+    static double lastPresentAt = -1e9, capHeldMs = 0.0;
+    static uint64_t waitWakes = 0; // sleeps and event waits in this loop ([lag]: the main thread's own wakeups)
+    double lastPad = waitStart;
+    bool ready = false, capped = false;
+    for (bool first = true;; first = false)
     {
-        ps2portFrameDisplayIdle(true); // nothing to show: the game need not wait for the display at its flip
-        std::this_thread::sleep_for(std::chrono::microseconds(500));
-        if ((spins & 7) == 0)
-            ps2portPadPoll(); // every 4 ms or so: a short tap is not missed between two frames
-        tick = runtime.eeScheduler().currentVSyncTick();
-        recorded = ps2portFrameRecorded();
+        const uint64_t seen = hooked ? ps2portFrameRecordedEvents() : 0u; // before the checks: an event after them ends the wait at once
+        if (!first)
+        {
+            tick = runtime.eeScheduler().currentVSyncTick();
+            recorded = ps2portFrameRecorded();
+        }
+        ready = due();
+        const double now = nowMs();
+        capped = ready && capMs > 0.0 && now - lastPresentAt < capMs && !ps2portDrawWantsLatch();
+        if ((ready && !capped) || now - waitStart >= 50.0)
+            break;
+        if (!ready)
+            ps2portFrameDisplayIdle(true); // nothing to show: the game need not wait for the display at its flip
+        if (now - lastPad >= padMs)
+        {
+            ps2portPadPoll();
+            lastPad = now;
+        }
+        const double untilPad = std::max(0.05, padMs - (now - lastPad));
+        ++waitWakes;
+        if (capped)
+        {
+            const double ms = std::min(untilPad, capMs - (now - lastPresentAt));
+            capHeldMs += ms;
+            std::this_thread::sleep_for(std::chrono::duration<double, std::milli>(ms));
+        }
+        else if (hooked)
+            ps2portFrameWaitEvent(seen, static_cast<uint32_t>(untilPad * 1000.0));
+        else
+            std::this_thread::sleep_for(std::chrono::duration<double, std::milli>(std::min(untilPad, pollMs)));
     }
-    if (!due())
+    if (!ready || capped)
         return;
+    lastPresentAt = nowMs();
     ps2portFrameDisplayIdle(false);
     // Present with the display registers of the flip this latch takes (2026-11-10: menus and loading screens blinked: by the
     // time the main thread latched, the game had often flipped again, and the live DISPFB named its next, half-drawn buffer)
@@ -808,6 +851,13 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
     }
     else if (frameSync && recorded == takenFlip)
         runtime.gs().ps2portSetPresentationRegs(nullptr); // no new flip (loads): the live registers, as before
+    // Work that buys nothing, counted for [lag]: flips recorded (and so drawn by the GPU at this latch) but never shown on their own,
+    // and presents with no new flip (loads: the live registers again, every guest vsync, after 100 ms without a flip)
+    static uint64_t flipsUnshown = 0, presentsNoFlip = 0;
+    if (frameSync && takenFlip != 0u && recorded > takenFlip + 1u)
+        flipsUnshown += recorded - takenFlip - 1u;
+    if (recorded == takenFlip)
+        ++presentsNoFlip;
     if (recorded != takenFlip)
         lastFlipAt = nowMs();
     takenFlip = recorded;
@@ -846,7 +896,8 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
     if (lagLog)
     {
         static double lagStart = t3;
-        static uint64_t before[6] = {}, latches = 0, regsMovedBefore = 0;
+        static uint64_t before[6] = {}, latches = 0, regsMovedBefore = 0, unshownBefore = 0, noFlipBefore = 0, wakesBefore = 0;
+        static double heldBefore = 0.0;
         ++latches;
         if (t3 - lagStart >= 5000.0)
         {
@@ -855,11 +906,18 @@ void ps2portDisplayFrame(PS2Runtime &runtime)
                 c[i] = ps2portFrameSyncCounts(i);
             const double span = (t3 - lagStart) / 1000.0;
             const uint64_t flipped = c[0] - before[0], lagged = c[5] - before[5];
-            std::fprintf(stderr, "[lag] t=%.0f sync %s: game flips/s %.1f, latches/s %.1f; flip to replayed %.1f ms avg, %.1f max; game waited %llu times, %.1f ms a frame, %llu time-outs; display registers had moved on at %llu latches\n",
+            std::fprintf(stderr, "[lag] t=%.0f sync %s: game flips/s %.1f, latches/s %.1f; flip to replayed %.1f ms avg, %.1f max; game waited %llu times, %.1f ms a frame, %llu time-outs; display registers had moved on at %llu latches; "
+                                 "flips never shown %llu, presents with no new flip %llu, main thread waits/s %.0f (%s), cap held %.0f ms\n",
                          seconds, frameSync ? "on" : "off", flipped / span, latches / span, lagged ? (c[4] - before[4]) / 1e6 / lagged : 0.0,
                          ps2portFrameSyncCounts(6) / 1e6, (unsigned long long)(c[1] - before[1]),
                          flipped ? (c[2] - before[2]) / 1e6 / flipped : 0.0, (unsigned long long)(c[3] - before[3]),
-                         (unsigned long long)(regsMoved - regsMovedBefore));
+                         (unsigned long long)(regsMoved - regsMovedBefore), (unsigned long long)(flipsUnshown - unshownBefore),
+                         (unsigned long long)(presentsNoFlip - noFlipBefore), (waitWakes - wakesBefore) / span, hooked ? "event" : "poll",
+                         capHeldMs - heldBefore);
+            unshownBefore = flipsUnshown;
+            noFlipBefore = presentsNoFlip;
+            wakesBefore = waitWakes;
+            heldBefore = capHeldMs;
             regsMovedBefore = regsMoved;
             std::memcpy(before, c, sizeof before);
             latches = 0;

@@ -19,7 +19,8 @@ disp=""
 if [ "${DISPLAY_ON:-0}" = 1 ]; then
     disp="PS2PORT_DISPLAY=1 PS2PORT_M5_STATS=1 SDL_VIDEODRIVER=offscreen LP_NUM_THREADS=0 PS2PORT_AUDIO=0"
 fi
-python3 -I scripts/heat_threads.py runner "$windows" --out "$out/$name.threads" --wait 120 > "$out/$name.sampler" 2>&1 &
+python3 -I scripts/heat_threads.py runner "$windows" --out "$out/$name.threads" --wait 120 \
+    --exe "$PWD/private/third_party/build-m2/x86/runner" > "$out/$name.sampler" 2>&1 &
 sampler=$!
 # shellcheck disable=SC2086
 DRAW=${DRAW:-0/1} PS2PORT_GIF_LOG= sh runner/try.sh "$secs" "CROSS@5+0.3" PS2PORT_PAD_SEQ=9:START:60,2:CROSS:60 \
