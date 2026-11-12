@@ -53,6 +53,15 @@ launcher pinned no clock, so 1.512 GHz (now 1.416). New switches: `CPU_KHZ`, `CP
 the doc (1.32/1.2 GHz, GPU 240/420 MHz, schedutil, soft step). Patches for the GS and IOP workers in `D:\ps2port-data\workers\`.
 PC numbers only; nothing run on the device.
 
+**2026-11-12 (GS worker, PC only, `docs/PHASE_9_GS.md`): fewer draw calls and register-path vertices, same picture.** GLES backend
+merges a run into the previous draw when every GL field is equal (`GSGLES_MERGE=0` off): GS dumps -8 to -19 % draw calls (N02_1
+1,470 -> 1,322), but in the game's own shop frames almost nothing merges (PC GLES run: about 2 a frame of ~1,640). Flat strips and
+strips after a state change or a carried-over pair now go straight from the packet to the backend (`GSGLES_FLAT_STRIPS=0`,
+`PS2PORT_GS_STRIP_RETRY=0` off; runtime patch `D:\ps2port-data\workers\gs-runtime.patch`, `gs_frontend.cpp`): register-path strip
+vertices N02_1 126,648 -> 36,060 (-72 %), N03_1 -75 %, I01_1 -31 %. Pictures identical on 8 dumps (GLES and CPU); vu1play check 0 GIF
+diffs; PC runner reaches play and mixes 47-48 k. Not run on the device. Tools: `scripts/gs_gsplay_set.sh`, `gs_gsplay_cmp.sh`,
+`gs_ppm_diff.py`, `gs_gsplay_prof.sh`, `gs_sample_syms.py`, `gs_runner_gles.sh`, `gs_m5w.py`; `PS2PORT_GS_STRIP_LOG=1`.
+
 **2026-11-12: dialogue that loops, cutscenes that wait.** User's device test of `43407554`: sound speed good; sometimes a phrase
 heard twice at its start; Ollivanders "could I see" looped as "could I" and the game never went on. The dialogue voices (core 0
 voices 0/1) loop their 8 KB ring when EA's `STREAM.IRX` stops refilling it (cause inside the module not found; double key-ons at

@@ -31,6 +31,37 @@ namespace
     constexpr uint32_t kPageBytes = 8192u;
     constexpr uint32_t kPageCount = 512u;
 
+    // Run merging (PHASE_9_GS): a new run whose GL state is the previous draw's in every field executeCommands reads goes on in
+    // that draw, so the GL thread makes one draw call where it made two. The GS state differed (another TEX0 address resolving to
+    // the same texture, a CLUT reload with the same palette, a register the GL path ignores), the GL work is the same, in the same
+    // order. GSGLES_MERGE=0 turns it off. Counters for the stats lines: merged runs, empty runs replaced, strip vertices taken
+    // straight from packets after a queued pair.
+    uint64_t g_gsglesMerged = 0, g_gsglesEmptyReplaced = 0, g_gsglesQueuedStrips = 0;
+}
+// the runtime's gs_frontend.cpp: vertex kicks, and strip vertices the backend took straight from packets
+extern uint64_t g_ps2portKicks, g_ps2portStripVertices;
+namespace
+{
+    bool gsglesMergeOn()
+    {
+        static const bool on = !std::getenv("GSGLES_MERGE") || std::atoi(std::getenv("GSGLES_MERGE")) != 0;
+        return on;
+    }
+    template <typename C>
+    bool sameGlDraw(const C &a, const C &b)
+    {
+        return a.type == b.type && a.mode == b.mode && a.rt == b.rt && a.rtTex == b.rtTex && a.copyTex == b.copyTex && a.rtW == b.rtW &&
+               a.rtH == b.rtH && a.depth == b.depth && a.program == b.program && a.inverseProgram == b.inverseProgram && a.afail == b.afail &&
+               a.firstPassEnabled == b.firstPassEnabled && a.tex == b.tex && a.clut == b.clut && a.sampler == b.sampler &&
+               std::memcmp(a.texSize, b.texSize, sizeof(a.texSize)) == 0 && std::memcmp(a.uvScale, b.uvScale, sizeof(a.uvScale)) == 0 &&
+               std::memcmp(a.fog, b.fog, sizeof(a.fog)) == 0 && a.aref == b.aref && a.fix == b.fix && a.rtAlpha == b.rtAlpha &&
+               std::memcmp(a.ta, b.ta, sizeof(a.ta)) == 0 && std::memcmp(a.region, b.region, sizeof(a.region)) == 0 &&
+               std::memcmp(a.regionMode, b.regionMode, sizeof(a.regionMode)) == 0 && a.blend == b.blend && a.srcRgb == b.srcRgb &&
+               a.dstRgb == b.dstRgb && a.equation == b.equation && a.blendConstant == b.blendConstant && a.colorMask == b.colorMask &&
+               a.depthTest == b.depthTest && a.depthWrite == b.depthWrite && a.depthFunc == b.depthFunc &&
+               std::memcmp(a.scissor, b.scissor, sizeof(a.scissor)) == 0;
+    }
+
     bool isIndexedPsm(uint8_t psm)
     {
         return psm == GS_PSM_T8 || psm == GS_PSM_T4 || psm == GS_PSM_T8H || psm == GS_PSM_T4HL || psm == GS_PSM_T4HH;
@@ -1440,7 +1471,8 @@ void GSGlesBackend::beginRun(const GSDrawState &state)
         cmd.inverseProgram = getProgram(inverseKey);
     }
 
-    if (std::getenv("GSPLAY_STATES"))
+    static const bool logStates = std::getenv("GSPLAY_STATES") != nullptr;
+    if (logStates)
     {
         char line[200];
         const GSTex0Reg &t0 = ctx.tex0;
@@ -1454,9 +1486,27 @@ void GSGlesBackend::beginRun(const GSDrawState &state)
 
     // executeCommands above may have cleared the list, so first is taken again
     cmd.first = static_cast<uint32_t>(m_vertices.size());
-    m_commands.push_back(cmd);
     ++m_stats.runs;
     m_needResolve = false;
+    if (gsglesMergeOn() && !m_commands.empty() && m_commands.back().type == Command::Type::Draw)
+    {
+        // a run that drew nothing does nothing when executed: the new one takes its place
+        if (m_commands.back().count == 0u)
+        {
+            m_commands.pop_back();
+            ++g_gsglesEmptyReplaced;
+        }
+        if (!m_commands.empty())
+        {
+            const Command &prev = m_commands.back();
+            if (prev.type == Command::Type::Draw && prev.first + prev.count == cmd.first && sameGlDraw(prev, cmd))
+            {
+                ++g_gsglesMerged;
+                return;
+            }
+        }
+    }
+    m_commands.push_back(cmd);
 }
 
 void GSGlesBackend::appendPrimitive(const GSVertex *verts, int count)
@@ -1598,12 +1648,16 @@ void GSGlesBackend::Submit(const GSPrimitiveBatch &batch)
     m_commands.back().count += static_cast<uint32_t>(m_vertices.size() - before);
 }
 
-bool GSGlesBackend::SubmitPackedStrip(const uint8_t *qwords, uint32_t count, const GSVertex *)
+bool GSGlesBackend::SubmitPackedStrip(const uint8_t *qwords, uint32_t count, const GSVertex *queue)
 {
     const GSDrawState &state = m_lastState;
-    // Flat strips recolor each triangle: the ordinary path handles those.
-    if (m_needResolve || m_commands.empty() || m_commands.back().type != Command::Type::Draw || !state.prim.iip || state.prim.fst)
+    // Flat strips (IIP 0, 31 % of the shop's strip vertices in N02_1) take each triangle's colour and fog from its last vertex,
+    // as appendPrimitive does (PHASE_9_GS; they went through the registers before).
+    // GSGLES_FLAT_STRIPS=0: flat strips through the registers, as before
+    static const bool flatStrips = !std::getenv("GSGLES_FLAT_STRIPS") || std::atoi(std::getenv("GSGLES_FLAT_STRIPS")) != 0;
+    if (m_needResolve || m_commands.empty() || m_commands.back().type != Command::Type::Draw || state.prim.fst || (!state.prim.iip && !flatStrips))
         return false;
+    const bool flat = !state.prim.iip;
     const GSContext &ctx = state.context;
     const float ox = 0.5f - ctx.xyoffset.ofx / 16.0f;
     const float oy = 0.5f - ctx.xyoffset.ofy / 16.0f;
@@ -1613,6 +1667,32 @@ bool GSGlesBackend::SubmitPackedStrip(const uint8_t *qwords, uint32_t count, con
     m_vertices.resize(before + static_cast<size_t>(count) * 3u);
     HostVertex *out = m_vertices.data() + before;
     HostVertex a, b;
+    // With a queue the strip goes on from the frontend's last two vertices (a packet whose first triangle drew through the
+    // registers, or a strip carried over from the packet before). Converted as appendPrimitive does: x and y are multiples of
+    // 1/16 well inside a float's precision, so (x - ofx) + 0.5 and x + (0.5 - ofx) are the same value.
+    uint32_t have = 0;
+    if (queue)
+    {
+        for (int k = 0; k < 2; ++k)
+        {
+            const GSVertex &g = queue[k];
+            HostVertex &h = k == 0 ? a : b;
+            h.x = g.x + ox;
+            h.y = g.y + oy;
+            h.z = std::min(static_cast<float>(g.z) * zScale, 1.0f);
+            h.s = g.s;
+            h.t = g.t;
+            h.q = g.q;
+            h.r = g.r;
+            h.g = g.g;
+            h.b = g.b;
+            h.a = g.a;
+            h.fog = g.fog;
+            h.pad[0] = h.pad[1] = h.pad[2] = 0;
+        }
+        have = 2;
+        ++g_gsglesQueuedStrips;
+    }
     for (uint32_t i = 0; i < count; ++i, qwords += 48)
     {
         uint32_t st[4], color[4];
@@ -1635,11 +1715,20 @@ bool GSGlesBackend::SubmitPackedStrip(const uint8_t *qwords, uint32_t count, con
         v.z = std::min(static_cast<float>((xyz[1] >> 4) & 0xFFFFFFu) * zScale, 1.0f);
         v.fog = static_cast<uint8_t>(xyz[1] >> 36);
         v.pad[0] = v.pad[1] = v.pad[2] = 0;
-        if (i >= 2u && !((xyz[1] >> 47) & 1u))
+        if (i + have >= 2u && !((xyz[1] >> 47) & 1u))
         {
             out[0] = a;
             out[1] = b;
             out[2] = v;
+            if (flat)
+                for (int k = 0; k < 2; ++k)
+                {
+                    out[k].r = v.r;
+                    out[k].g = v.g;
+                    out[k].b = v.b;
+                    out[k].a = v.a;
+                    out[k].fog = v.fog;
+                }
             out += 3;
         }
         a = b;
@@ -2492,5 +2581,8 @@ void GSGlesBackend::printStats() const
                 (unsigned long long)s.rtTextures, (unsigned long long)s.rtFeedback, m_rts.size());
     std::printf("gles: fbfetch runs %llu, no-fetch fallbacks %llu, partial FBMSK %llu, RT uploads %llu\n",
                 (unsigned long long)s.fbBlendRuns, (unsigned long long)s.fbBlendMissing, (unsigned long long)s.partialMask, (unsigned long long)s.rtUploads);
+    std::printf("gles: merged runs %llu, empty runs replaced %llu, strips taken after a queued pair %llu, strip vertices taken from packets %llu, kicks %llu, vertex bytes to GL %.2f MB\n",
+                (unsigned long long)g_gsglesMerged, (unsigned long long)g_gsglesEmptyReplaced, (unsigned long long)g_gsglesQueuedStrips,
+                (unsigned long long)g_ps2portStripVertices, (unsigned long long)g_ps2portKicks, s.vertices * sizeof(HostVertex) / 1048576.0);
     std::printf("gles: ms decode %.2f, hash %.2f, upload %.2f, execute %.2f, present %.2f, vram %.2f\n", s.decodeMs, s.hashMs, s.uploadMs, s.executeMs, s.presentMs, s.vramMs);
 }
