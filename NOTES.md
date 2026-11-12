@@ -42,6 +42,17 @@ Phase reports live in `docs/PHASE_N.md`.
   (end of stream from the game's own stream state, drop the `0x171904` write); (5) thermal runs at 1.2/1.0 GHz with the
   fixed guard; (6) sticky pad presses for low-fps menus.
 
+**2026-11-12 (heat worker, no device access): polling removed, clock switches, experiment plan.** `docs/PHASE_9_HEAT.md`. Device
+logs: play keeps all four cores 60-73 % busy (about 280 %); the game thread and stage A near 100 %, so at a fixed clock faster code
+means more frames, not less heat; the kernel never throttles 1.416 GHz before 115 C. Fixed: the main thread's 0.5 ms poll for a
+frame (now an event, with the GS patch; PC 171-312 -> 12-43 waits/s), the EE's 50 us poll while waiting on the IOP thread (IOP
+patch; PC game-thread wakeups 559 -> 459/s in play, 226 -> 37/s in cutscenes), forks in the guard's temperature check. Found: the
+guard did not restore the clock when itself stopped (fixed); `play.sh 30 GPU_MIN_HZ=0` went to the runner (fixed); the Ports
+launcher pinned no clock, so 1.512 GHz (now 1.416). New switches: `CPU_KHZ`, `CPU_GOV`, `THROTTLE_MC` (soft step before 85 C),
+`PS2PORT_PRESENT_CAP` (off). Polling was worth only about 1-3 % of a core (estimate): the clock decides; plan of 10 device runs in
+the doc (1.32/1.2 GHz, GPU 240/420 MHz, schedutil, soft step). Patches for the GS and IOP workers in `D:\ps2port-data\workers\`.
+PC numbers only; nothing run on the device.
+
 **2026-11-12: dialogue that loops, cutscenes that wait.** User's device test of `43407554`: sound speed good; sometimes a phrase
 heard twice at its start; Ollivanders "could I see" looped as "could I" and the game never went on. The dialogue voices (core 0
 voices 0/1) loop their 8 KB ring when EA's `STREAM.IRX` stops refilling it (cause inside the module not found; double key-ons at

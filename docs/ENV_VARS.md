@@ -25,14 +25,20 @@ VAR=VALUE ...`. "Private" means the code is in the PS2Recomp checkout under `pri
 | `PS2PORT_CD_LATENCY_US` | 2000 | When a CD read's completion callback runs on the IOP, in microseconds after the request (was 3.5 us). | private IOP |
 | `PS2PORT_MOVIE_DIRECT` | 1 | When EA's disc stream gives the movie decoder nothing, the decoder reads the movie file from the disc folder itself, 64 KB at a time, and hands the movie's sound packets to the game's audio callback. 0: off (the movie then waits for the stream, which stalls here). | private `MPEG.cpp` |
 | `GSGLES_PAL_EXPAND` | 1 | Palette textures drawn with the linear filter are expanded to RGBA once (one texture fetch instead of eight). 0: old shader path. | `gsgles/gs_gles_backend.cpp` |
-| `GPU_MIN_HZ` | 648000000 | The GPU's minimum clock for a device session (its governor otherwise stays at 240 MHz). 0: leave it. | `runner/device_play.sh`, `device_panel.sh` |
+| `GPU_MIN_HZ` | 648000000 | The GPU's minimum clock for a device session (its governor otherwise stays at 240 MHz). 0: leave it. Given to `scripts/play.sh` as `GPU_MIN_HZ=0`, the script takes it (before 2026-11-12 it went to the runner and did nothing). | `runner/device_play.sh`, `device_panel.sh`, the Ports launcher |
+| `CPU_KHZ` | 1416000 | `scripts/play.sh` only: the CPU clock's ceiling for the session (one policy for all four cores): 480000, 792000, 1008000, 1200000, 1320000, 1416000 or 1512000. The Ports launcher takes the same name (it left the firmware's 1512000 before). | `scripts/play.sh` (as `DEVICE_KHZ` to the guard), launcher |
+| `CPU_GOV` | (the guard's `performance`) | The CPU governor under that ceiling, e.g. `schedutil` (the clock may drop when the cores idle: menus, loads). The guard puts the old one back. | `device_play.sh`, `device_panel.sh`, launcher |
+| `THROTTLE_MC`, `THROTTLE_KHZ` | off, 1200000 | A soft step before the 85 C stop: above `THROTTLE_MC` milli-C the CPU ceiling drops to `THROTTLE_KHZ`, and comes back 6 C lower (`[heat]` lines in `play-*/freq.log`). The 85 C stop is unchanged. | `device_play.sh` |
+| `PS2PORT_PRESENT_CAP` | 0 (off) | At most N presents a second. A frame that comes sooner waits, the display counts as busy, so the game waits at its next flip (frame sync) instead of drawing frames that are never shown: less work in menus and loading screens that flip 60 times a second. Play already runs below 30. | `runner/display.cpp` |
+| `PS2PORT_PAD_POLL_MS` | 4 | How often the main thread reads the pad while it waits for a frame. | `display.cpp` |
+| `PS2PORT_DISPLAY_POLL_US` | 500 | Only with a runtime that lacks the frame event (`ps2portFrameWaitEvent`, heat patch for `ps2_memory.cpp`): how often the main thread looks for a new frame. With the event it sleeps until one is recorded. | `display.cpp` |
 
 ## Logs and statistics
 
 | Variable | What it writes | Where |
 |---|---|---|
 | `PS2PORT_M5_STATS=1` | Every 5 s on the device: frame times, latch and swap, CPU per thread, GPU work, memory, sound mix rate (`[m5]`, `[m5f]`, `[m5t]`, `[m5m]` with logic ticks per second, `[m5w]`, `[m5h]`). On in `device_panel.sh`. | `display.cpp` |
-| `PS2PORT_LAG_LOG=1` | Every 5 s: game flips and latches per second, flip to replayed (ms), how long the game waited for the display, and at how many latches the live display registers had already moved on to the next flip (`[lag]`). On in play sessions. | `display.cpp` |
+| `PS2PORT_LAG_LOG=1` | Every 5 s: game flips and latches per second, flip to replayed (ms), how long the game waited for the display, and at how many latches the live display registers had already moved on to the next flip (`[lag]`). Since 2026-11-12 also work that buys nothing: flips recorded but never shown on their own, presents with no new flip, the main thread's waits a second (`event` or `poll`), and how long `PS2PORT_PRESENT_CAP` held frames back. On in play sessions. | `display.cpp` |
 | `PS2PORT_FRAME_LOG=FILE` | One line per game frame: ms since start, frame ms, vblank count, vblanks of the last frame. | `display.cpp` |
 | `PS2PORT_FRAME_DIR=DIR`, `PS2PORT_FRAME_EVERY=N` | A picture of the shown frame every N presents (device: PPM; PC: PPM named `.png`). | `display.cpp`, private runtime |
 | `PS2PORT_PAD_LOG=1` | Every change of the pad's buttons and sticks (`[pad]`). On in play sessions. | `pad_sdl.cpp` |
@@ -70,7 +76,8 @@ VAR=VALUE ...`. "Private" means the code is in the PS2Recomp checkout under `pri
 | `PS2PORT_RUN_SECONDS=N` | End the run after N seconds. | private runtime |
 | `PS2PORT_PRESENT_EVERY=N` | PC: present only every Nth vsync (the software present takes a quarter of the game's time in 3D scenes). | private runtime |
 | `PS2PORT_GS_DRAW_WINDOW=ON/PERIOD` | PC: rasterize only ON seconds of each PERIOD (`0/1`: never; for logic tests). `runner/try.sh` sets it from `DRAW`. | private `gs_cpu_backend.cpp` |
-| `PS2PORT_SLOWDOWN=P` | PC: the EE thread runs at about P % of a PS2's speed, to imitate the device. | private `EeScheduler.cpp` |
+| `PS2PORT_SLOWDOWN=P` | PC: the EE thread runs at about P % of a PS2's speed, to imitate the device. It busy-waits to do so: the game thread's CPU share on the PC is then not its work. | private `EeScheduler.cpp` |
+| `DISPLAY_ON=1`, `SLOWDOWN`, `DRAW`, `PRESENT_EVERY` | `scripts/heat_run.sh`: per-thread CPU and wakeups of a PC run (`scripts/heat_threads.py`); `DISPLAY_ON=1` runs the device's display loop on SDL's offscreen driver and llvmpipe. | `scripts/heat_run.sh` |
 
 ## Experiments (off by default; see `docs/PHASE_8.md`)
 
