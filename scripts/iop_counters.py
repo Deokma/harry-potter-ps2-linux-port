@@ -43,6 +43,20 @@ def main():
                 for k, v in pairs.findall(m.group(2)):
                     tables[m.group(1)][k] += float(v)
                 continue
+            m = re.match(r"\[iopc\] interpreted instr/s ([0-9]+)", line)
+            if m:
+                scalars["interpreted instr/s"].append(float(m.group(1)))
+                continue
+            m = re.match(r"\[iopc\] native libsd calls/s ([0-9]+), fallbacks/s ([0-9]+)", line)
+            if m:
+                scalars["native libsd calls/s"].append(float(m.group(1)))
+                scalars["native libsd fallbacks/s"].append(float(m.group(2)))
+                continue
+            m = re.match(r"\[iopc\] host ms/s: (.*)", line)
+            if m:
+                for k, v in num.findall(m.group(1)):
+                    scalars["host ms/s " + k.strip()].append(float(v))
+                continue
             m = re.match(r"\[iopc\] imports/s ([0-9]+):(.*)", line)
             if m:
                 scalars["imports total"].append(float(m.group(1)))

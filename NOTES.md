@@ -42,6 +42,17 @@ Phase reports live in `docs/PHASE_N.md`.
   (end of stream from the game's own stream state, drop the `0x171904` write); (5) thermal runs at 1.2/1.0 GHz with the
   fixed guard; (6) sticky pad presses for low-fps menus.
 
+**2026-11-12 (worker IOP, PC only): IOP and mixer cost counted; LIBSD's voice readers native.** `PS2PORT_IOP_COUNTERS=1`
+(`[iopc]` lines, `scripts/iop_counters.py`): in play the IOP skips 98 % of its cycles as idle and interprets 0.73 M instructions a
+second, 93 % in EA's `STREAM.IRX` main loop, a third in LIBSD's `sceSdGetAddr`/`sceSdGetParam` (its per-tick poll of all 48
+voices); the mixer is cheap (0.2-0.5 voices a frame). Changes (sandbox PS2Recomp, patches in `D:\ps2port-data\workers\iop-*.patch`):
+those two LIBSD functions in native code, cycle-exact (`PS2PORT_IOP_HLE=0` off, `=2` check mode: 1.8 M calls, 0 mismatches),
+interpreted instructions -28 %; mixer loop over sounding voices only (unit test `scripts/iop_mixer_test.sh`: output identical);
+cheaper import-stub test. **PC trap found:** `try_sound.sh`'s PCM capture written from the mixer to `/mnt/d` cost the IOP thread
+210-475 ms/s inside the IOP lock and made the game thread wait 125-146 ms/s in catch-ups; now a writer thread (3-11 ms/s of
+waits). PC device pace: route intact, play at 217.8 s, mix 100 %; full speed play at 183.6 s. Not run on the device (next: one
+play run with `PS2PORT_IOP_COUNTERS=1`). Details `docs/PHASE_9_IOP.md`.
+
 **2026-11-12: dialogue that loops, cutscenes that wait.** User's device test of `43407554`: sound speed good; sometimes a phrase
 heard twice at its start; Ollivanders "could I see" looped as "could I" and the game never went on. The dialogue voices (core 0
 voices 0/1) loop their 8 KB ring when EA's `STREAM.IRX` stops refilling it (cause inside the module not found; double key-ons at
