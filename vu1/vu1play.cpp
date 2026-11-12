@@ -22,6 +22,9 @@
 extern uint64_t g_egVu1Notes[2048];
 extern uint64_t g_egVu1Counts[2048];
 extern bool g_ps2portVifGeneric;
+// ps2_memory.cpp counts the EE's blocked time here; ps2_runtime.cpp (not linked into vu1play) defines it in the runner
+#include <atomic>
+std::atomic<uint64_t> g_ps2portEeBlockedNs[8];
 
 namespace
 {
