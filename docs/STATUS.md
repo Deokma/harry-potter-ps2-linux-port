@@ -26,6 +26,10 @@ movies and the later chapters are left.
 | Heat | 40 % | 85 C after 5-13 minutes at 1.416 GHz; the session stops there. |
 | Launching | 50 % | `sh scripts/play.sh` over SSH works; the Ports launcher is written but has not run on the device. |
 
+**2026-11-13, Phase 9 (`docs/PHASE_9.md`):** less work per frame on the EE (-9.4 % instructions), GS parsing, the IOP and in the
+waits, counted on the PC; play binary `7a0e74dc`, not yet run on the device. Frame time and heat rows above are still the last
+device measurements. First thing next: the user's device test, then the CPU clock runs (`docs/PHASE_9_HEAT.md`, section 7).
+
 ## What to do next, in order
 
 1. **The user's tests** (device): stick, lag, Menu + L1, `docs/VISUAL_CHECKLIST.md`, `sh scripts/install_port.sh` and the Ports

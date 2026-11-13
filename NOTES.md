@@ -42,6 +42,18 @@ Phase reports live in `docs/PHASE_N.md`.
   (end of stream from the game's own stream state, drop the `0x171904` write); (5) thermal runs at 1.2/1.0 GHz with the
   fixed guard; (6) sticky pad presses for low-fps menus.
 
+**2026-11-13: Phase 9 merged (frame time and heat, four parallel workers; PC only, nothing run on the device).** Index and merge
+record: `docs/PHASE_9.md`; pieces `docs/PHASE_9_{EE,GS,IOP,HEAT}.md` (their paragraphs follow). All four branches are in main;
+after each merge the PC at the device's pace went through New Game to play (214.8-220.0 s) with the mix at 48 k of 48 k. Counted
+on the PC: EE instructions per game frame -9.4 %, register-path strip vertices -69 %, interpreted IOP instructions -28 %, main
+loop waits 171-312 -> 12-43 a second. **Expectation, not a measurement: this does not reach 40 ms or 30 minutes by itself; the CPU
+clock decides the heat (user's decision after the runs in `docs/PHASE_9_HEAT.md`, section 7).** Play binary `7a0e74dc` (built, not
+run on the device; previous `runner-aarch64.e8bb5fa6`). Runtime and IOP patches refreshed. **Next: the user's device test**
+(`sh scripts/play.sh 10 PS2PORT_M5_STATS=1`: `[m5f]` ms a frame, `[m5]` CPU per thread, temperature, `[lag]`), then the clock
+runs. Parallel workers: `scripts/worker_sandbox.sh` (a worktree's own `private/`), runtime changes come back as patches in
+`D:\ps2port-data\workers\`; four Opus workers at once hit the 5-hour usage limit twice. Worktrees and branches
+`worktree-agent-*` under `.claude/worktrees/` can be deleted once the device test is good (about 0.5 GB each).
+
 **2026-11-12 (heat worker, no device access): polling removed, clock switches, experiment plan.** `docs/PHASE_9_HEAT.md`. Device
 logs: play keeps all four cores 60-73 % busy (about 280 %); the game thread and stage A near 100 %, so at a fixed clock faster code
 means more frames, not less heat; the kernel never throttles 1.416 GHz before 115 C. Fixed: the main thread's 0.5 ms poll for a
