@@ -42,6 +42,12 @@ Phase reports live in `docs/PHASE_N.md`.
   (end of stream from the game's own stream state, drop the `0x171904` write); (5) thermal runs at 1.2/1.0 GHz with the
   fixed guard; (6) sticky pad presses for low-fps menus.
 
+**2026-11-13: study for a stable 30 frames a second (`docs/PHASE_10_STUDY.md`; nothing implemented, the user chooses).** Device
+profile of the game thread (`play-140841`, no-input New Game, sampler 330-470 s): flat; eegen code 54 %, the runtime's DMA
+chain copy 7 %, `writeIORegister` 5 %; top guest function 5.2 %, top 20 24 %. Ollivanders standing: 37.6 ms of EE CPU a frame.
+In the 63-109 ms parts no thread is saturated: not an EE limit. Shop counter and street not measured. A no-input device session
+with the sampler: the command at the top of that page.
+
 **2026-11-13: first device runs of Phase 9's binary `7a0e74dc` (user; `docs/PHASE_9.md`, "Device results").** Ollivanders after
 New Game: 40-42 ms a frame standing, 44-66 ms moving, mean 49.2 ms (was 55-67; views not matched). No 85 C stop in 7 minutes at
 1.416 GHz (peak 73.3 C) or 1.32 GHz (73.1 C); too short for the 30 minute target. Sound mixes at 48 k of 48 k on the device.
