@@ -4,6 +4,7 @@
 # New Game with no input after the menu (runner/try_sound.sh's pad route), 270 s at full PC speed, samples from 200 to 260 s
 # (gameplay, mode 5, starts at ~183 s). Writes /mnt/d/ps2port-data/workers/NAME.{samples*,log} and prints the game frames in
 # the window, GameThread samples per game frame and the top groups/functions. PC numbers: not device timings.
+# One run at a time: the log is taken from the newest boot-* folder (two runs started together get the same one).
 set -eu
 name=$1
 runner=${2:-$PWD/private/third_party/build-m2/x86/runner}
