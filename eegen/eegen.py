@@ -611,6 +611,11 @@ class Program:
                 if int(m.group(2), 16) == int(m.group(3), 16):
                     self.ps2recomp[int(m.group(3), 16)] = m.group(1)
         self.checkpoints = args.checkpoints
+        self.ret_resumes = getattr(args, "return_resumes", False)
+        # calls through the function table: the runtime's dispatchGuestBranch, or eegen_rt.h's eg_dispatch (same checkpoint and
+        # result, without the debug history, entry counts and recording hooks; the runner only: the harness has its own table)
+        self.dispatch = "eg_dispatch" if getattr(args, "fast_dispatch", False) else "runtime->dispatchGuestBranch"
+        self.dispatch_args = "rdram, ctx, runtime" if self.dispatch == "eg_dispatch" else "rdram, ctx"
         self.no_entry = set()  # loop heads with nowhere to resume: no checkpoint there
         self.resumes = {}  # function start: loop heads it checkpoints at, which get an eegen entry of their own (EG_xxx_r)
         self.skip = {int(x, 16) for x in args.skip.split(",")} if args.skip else set()
@@ -1037,10 +1042,10 @@ def emit_function(prog, start, end):
                     line.append(f"ctx->pc = 0x{t:x}u; {call_other(prog, fn)} "
                                 f"if (EG_UNLIKELY(ctx->pc != 0x{ret:x}u)) {{ if (ctx->pc != 0x{t:x}u) return; ctx->pc = 0x{ret:x}u; }}")
                 else:
-                    line.append(f"if (!runtime->dispatchGuestBranch(rdram, ctx, 0x{t:x}u, 0x{e['addr']:x}u, 0x{ret:x}u, "
+                    line.append(f"if (!{prog.dispatch}({prog.dispatch_args}, 0x{t:x}u, 0x{e['addr']:x}u, 0x{ret:x}u, "
                                 f"PS2Runtime::GuestBranchKind::DirectCall, \"JAL\")) return;")
             elif e["call"] == "jalr":
-                line.append(f"ctx->pc = {e['target']}; if (!runtime->dispatchGuestBranch(rdram, ctx, {e['target']}, "
+                line.append(f"ctx->pc = {e['target']}; if (!{prog.dispatch}({prog.dispatch_args}, {e['target']}, "
                             f"0x{e['addr']:x}u, 0x{e['ret']:x}u, PS2Runtime::GuestBranchKind::IndirectCall, \"JALR\")) return;")
             elif e["call"] == "syscall":
                 line.append(f"ctx->pc = 0x{e['addr'] + 4:x}u; runtime->handleSyscall(rdram, ctx, 0x{e['code_no']:x}u);")
@@ -1084,19 +1089,40 @@ def emit_function(prog, start, end):
         out.append("    float " + ", ".join(fp) + ";")
     for t in temps:
         out.append(f"    {t};")
-    if checks:
+    # Return points: the instruction after a call or a syscall. A checkpoint inside a callee (or at an indirect call, or a thread
+    # switch in a syscall) unwinds the whole host call stack; the guest then comes back to each caller at its return address.
+    # With an entry of eegen's own there (2026-11-12, docs/PHASE_9_EE.md) the rest of the caller stays in eegen's code instead of
+    # PS2Recomp's re-entry code. Only the registers live at that point are loaded (lin: the ones read, or written back unchanged,
+    # before being set); everything is in the context there, since the call or syscall spilled and the unwinding left it so.
+    rets = {}
+    if prog.checkpoints and prog.ret_resumes:
+        index = {n.label: k for k, n in enumerate(nodes) if n.label}
+        for n in nodes:
+            if n.kind != "sync":
+                continue
+            e = n.extra
+            r = e["ret"] if e["call"] in ("jal", "jalr") else (e["addr"] + 4 if e["call"] == "syscall" else None)
+            if r is None or not (start <= r < end) or r in prog.starts or r in checks or f"L_{r:x}" not in index:
+                continue
+            rets[r] = index[f"L_{r:x}"]
+    if checks or rets:
         # A thread resumed at one of this function's loop heads (after a checkpoint) comes back here through EG_xxx_r, not into
         # PS2Recomp's code: every cached register from the context (the checkpoint spilled the live ones), then to the loop head.
-        cases = " ".join(f"case 0x{t:x}u: goto L_{t:x};" for t in sorted(checks))
-        out.append(f"    if (__builtin_expect(eg_resume_pc != 0u, 0)) {{ const uint32_t r_ = eg_resume_pc; eg_resume_pc = 0u; "
-                   f"{reload(regs)} switch (r_) {{ {cases} default: break; }} }}")
-        prog.resumes[start] = sorted(checks)
+        rcases = " ".join(f"case 0x{t:x}u: {{ {reload(lin[rets[t]])} goto L_{t:x}; }}" for t in sorted(rets))
+        text = f"    if (__builtin_expect(eg_resume_pc != 0u, 0)) {{ const uint32_t r_ = eg_resume_pc; eg_resume_pc = 0u; "
+        if rets:
+            text += f"switch (r_) {{ {rcases} default: break; }} "
+        if checks:
+            cases = " ".join(f"case 0x{t:x}u: goto L_{t:x};" for t in sorted(checks))
+            text += f"{reload(regs)} switch (r_) {{ {cases} default: break; }} "
+        out.append(text + "}")
+        prog.resumes[start] = sorted(checks | set(rets))
     entry = reload(lin[0])
     if entry:
         out.append("    " + entry)
     out.extend(body)
     out.append("}")
-    if checks:
+    if checks or rets:
         out.append("")
         out.append(f"void EG_{start:08x}_r(uint8_t *rdram, R5900Context *ctx, PS2Runtime *runtime)")
         out.append("{")
@@ -1104,7 +1130,7 @@ def emit_function(prog, start, end):
         out.append(f"    EG_{start:08x}(rdram, ctx, runtime);")
         out.append("}")
     stats = {"nodes": len(nodes), "entry_loads": len(lin[0]),
-             "syncs": sum(1 for n in nodes if n.kind == "sync")}
+             "syncs": sum(1 for n in nodes if n.kind == "sync"), "loop_resumes": len(checks), "return_resumes": len(rets)}
     return "\n".join(out) + "\n", stats
 
 
@@ -1122,6 +1148,8 @@ def main():
     ap.add_argument("--no-float-groups", action="store_true")
     ap.add_argument("--runtime-count", action="store_true", help="read Count from the runtime (ps2portReadCount), not from the context")
     ap.add_argument("--checkpoints", action="store_true", help="loop checkpoints, which a whole game needs")
+    ap.add_argument("--return-resumes", action="store_true", help="with --checkpoints: eegen entries at call and syscall return points too")
+    ap.add_argument("--fast-dispatch", action="store_true", help="calls through the function table inline (eg_dispatch), runner only")
     ap.add_argument("--borrow", help="PS2Recomp's output directory: its code for instructions eegen lacks (COP2 macro, MMI, ADDI, COP0)")
     args = ap.parse_args()
     global RUNTIME_COUNT

@@ -29,9 +29,16 @@ floats="--no-float-groups"
 # 64 bits, lq / sq mask the address. PS2PORT_PS2RECOMP_SEMANTICS=1: PS2Recomp's, as before (the replay harness's reference).
 semantics="--hardware-semantics-of ${PS2PORT_HW_SEMANTICS:-sqrt,cvt,branch,lqsq}"
 [ "${PS2PORT_PS2RECOMP_SEMANTICS:-0}" = 1 ] && semantics=""
+# eegen entries at call and syscall return points too (2026-11-12, docs/PHASE_9_EE.md): a caller resumed after its callee's
+# checkpoint stays in eegen's code. PS2PORT_EG_RETURN_RESUMES=0: loop heads only, as before.
+rets="--return-resumes"
+[ "${PS2PORT_EG_RETURN_RESUMES:-1}" = 0 ] && rets=""
+# calls through the function table inline (eegen_rt.h, eg_dispatch), not through dispatchGuestBranch's bookkeeping.
+# PS2PORT_EG_FAST_DISPATCH=0: as before (needed for PS2PORT_CALLCOUNT entry counts and the dispatch history in error reports).
+[ "${PS2PORT_EG_FAST_DISPATCH:-1}" = 1 ] && rets="$rets --fast-dispatch"
 rm -rf "$out/eg.new"
 python3 -I eegen/eegen.py "$elf" "$t/function_map.csv" "$out/eg.new" --functions "$out/functions.txt" \
-    --ps2recomp-table "$t/out-b/register_functions.cpp" --native "$out/native.txt" --skip "$skip" $floats $semantics --runtime-count --checkpoints \
+    --ps2recomp-table "$t/out-b/register_functions.cpp" --native "$out/native.txt" --skip "$skip" $floats $semantics --runtime-count --checkpoints $rets \
     --borrow "$t/out-b" | tail -4 | cut -c1-240
 # The five movie functions in PS2Recomp's tree are what eegen's code falls back to when it resumes in the middle of one (eegen
 # resumes only at loop heads): the stubs when movies are stubbed, PS2Recomp's real code otherwise (2026-11-11: with the stub

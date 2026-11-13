@@ -73,6 +73,16 @@ cheaper import-stub test. **PC trap found:** `try_sound.sh`'s PCM capture writte
 waits). PC device pace: route intact, play at 217.8 s, mix 100 %; full speed play at 183.6 s. Not run on the device (next: one
 play run with `PS2PORT_IOP_COUNTERS=1`). Details `docs/PHASE_9_IOP.md`.
 
+**2026-11-13 (EE worker, PC only): resumed callers stay in eegen's code.** eegen now has entries at every call and syscall
+return point (`--return-resumes`, 36,347) and calls through the function table inline (`--fast-dispatch`, `eg_dispatch` in
+`eegen_rt.h`); both on in `runner/gen.sh` (`PS2PORT_EG_RETURN_RESUMES=0`, `PS2PORT_EG_FAST_DISPATCH=0` off). A/B on the PC in play,
+per game frame: EE user-mode instructions 28.15 -> 25.50 M (-9.4 %, hardware counter), GameThread samples -9.9 % (-20 % outside
+libc), table lookups 6,368 -> 187, stack unwinds 477 -> 129, PS2Recomp code 6 -> 0 %; same GIF work. Harness 0 bytes / 2,861,449;
+mode 5 at 183 s (220 s at `PS2PORT_SLOWDOWN=60`), sound 48 k of 48 k. Not run on the device. Counters: `[eework]` lines
+(`PS2PORT_STATS=1`, runtime patch `D:\ps2port-data\workers\ee-runtime.patch`), `scripts/ee_profile_play.sh`, `ee_compare.py`.
+EE CPU time is not a stable measure on a shared PC (same binary 11.7 vs 7.5 ms). On the PC 25-30 % of the game thread is futex
+wakes from GS/IOP hand-offs (proposal for those files in `docs/PHASE_9_EE.md`).
+
 **2026-11-12: dialogue that loops, cutscenes that wait.** User's device test of `43407554`: sound speed good; sometimes a phrase
 heard twice at its start; Ollivanders "could I see" looped as "could I" and the game never went on. The dialogue voices (core 0
 voices 0/1) loop their 8 KB ring when EA's `STREAM.IRX` stops refilling it (cause inside the module not found; double key-ons at

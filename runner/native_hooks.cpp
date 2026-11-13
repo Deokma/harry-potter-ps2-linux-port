@@ -125,7 +125,8 @@ void ps2portInstallNative()
         ++count;
     }
     std::fprintf(stderr, "[native] %u eegen functions in the table\n", count);
-    // Resumes at loop heads go to eegen's own entries, not PS2Recomp's re-entry code (PS2PORT_NO_EG_RESUME=1 keeps PS2Recomp's)
+    // Resumes at loop heads, and at call and syscall return points (runner/gen.sh), go to eegen's own entries, not PS2Recomp's
+    // re-entry code (PS2PORT_NO_EG_RESUME=1 keeps PS2Recomp's)
     if (std::getenv("PS2PORT_NO_EG_RESUME"))
         return;
     unsigned resumes = 0;
@@ -136,7 +137,7 @@ void ps2portInstallNative()
         g_ps2RecompiledFunctionTable[(f->address - g_ps2RecompiledFunctionTableBase) >> 2] = f->function;
         ++resumes;
     }
-    std::fprintf(stderr, "[native] %u loop heads resume in eegen's code\n", resumes);
+    std::fprintf(stderr, "[native] %u loop heads and return points resume in eegen's code\n", resumes);
 }
 
 bool ps2portVu0Native(PS2Memory &memory, R5900Context *ctx, uint32_t startPC)

@@ -347,5 +347,31 @@ extern const unsigned eg_function_count;
 extern const EgFunction eg_resumes[];
 extern uint32_t eg_resume_pc;
 
+// A call through the function table (eegen --fast-dispatch, the runner only; 2026-11-12, docs/PHASE_9_EE.md): what
+// PS2Runtime::dispatchGuestBranch does for a call to a function that is in the table (the same checkpoint charge, call and result),
+// inline, without its debug history (pushDispatchPc), PS2PORT_CALLCOUNT entry counts and the replay recorder's hooks. Anything
+// else (a target outside the table or missing from it) goes to dispatchGuestBranch as before.
+EG_INLINE bool eg_dispatch(uint8_t *rdram, R5900Context *ctx, PS2Runtime *rt, uint32_t t, uint32_t src, uint32_t ret,
+                           PS2Runtime::GuestBranchKind kind, const char *name)
+{
+    if (EG_LIKELY((t & 3u) == 0u && t >= g_ps2RecompiledFunctionTableBase && t < g_ps2RecompiledFunctionTableEnd))
+    {
+        const PS2Runtime::RecompiledFunction fn = g_ps2RecompiledFunctionTable[(t - g_ps2RecompiledFunctionTableBase) >> 2];
+        if (EG_LIKELY(fn != nullptr))
+        {
+            ctx->pc = t;
+            if (rt->eeCheckpointDue(8u)) // EeScheduler::kGuestDispatchCycles
+                return false;
+            fn(rdram, ctx, rt);
+            if (rt->isStopRequested() || ctx->pc == 0u)
+                return false;
+            if (ctx->pc == t)
+                ctx->pc = ret;
+            return ctx->pc == ret;
+        }
+    }
+    return rt->dispatchGuestBranch(rdram, ctx, t, src, ret, kind, name);
+}
+
 #define EG_LD(T, a) eg_ld<T>(rdram, ctx, runtime, (a))
 #define EG_ST(T, a, v) eg_st<T>(rdram, ctx, runtime, (a), static_cast<T>(v))
