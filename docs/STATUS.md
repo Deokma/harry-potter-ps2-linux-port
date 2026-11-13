@@ -30,6 +30,10 @@ movies and the later chapters are left.
 waits, counted on the PC; play binary `7a0e74dc`, not yet run on the device. Frame time and heat rows above are still the last
 device measurements. First thing next: the user's device test, then the CPU clock runs (`docs/PHASE_9_HEAT.md`, section 7).
 
+**2026-11-13, first device runs of `7a0e74dc` (user):** Ollivanders 40-42 ms standing, 44-66 ms moving (was 55-67); no 85 C
+stop in 7 minutes at 1.416 or 1.32 GHz (peak 73 C); sound rate 48 k of 48 k; streams still starve and end, more often at
+1.32 GHz. Details: `docs/PHASE_9.md`, "Device results".
+
 ## What to do next, in order
 
 1. **The user's tests** (device): stick, lag, Menu + L1, `docs/VISUAL_CHECKLIST.md`, `sh scripts/install_port.sh` and the Ports

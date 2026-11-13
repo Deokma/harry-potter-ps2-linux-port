@@ -42,6 +42,14 @@ Phase reports live in `docs/PHASE_N.md`.
   (end of stream from the game's own stream state, drop the `0x171904` write); (5) thermal runs at 1.2/1.0 GHz with the
   fixed guard; (6) sticky pad presses for low-fps menus.
 
+**2026-11-13: first device runs of Phase 9's binary `7a0e74dc` (user; `docs/PHASE_9.md`, "Device results").** Ollivanders after
+New Game: 40-42 ms a frame standing, 44-66 ms moving, mean 49.2 ms (was 55-67; views not matched). No 85 C stop in 7 minutes at
+1.416 GHz (peak 73.3 C) or 1.32 GHz (73.1 C); too short for the 30 minute target. Sound mixes at 48 k of 48 k on the device.
+Open: streams starve and end (`[spu] ... without a refill: ended`) 8 times at 1.416 GHz and 11 at 1.32 GHz, where the user hears
+sound that does not start; A/B to run: `sh scripts/play.sh 10 CPU_KHZ=1320000 PS2PORT_IOP_HLE=0`. Open: 84-109 ms frames in the
+last minute of run 1 (screen unknown). Fetch a session's logs with `sh scripts/play_fetch.sh [play-NAME ...]` (to
+`private/play/`).
+
 **2026-11-13: Phase 9 merged (frame time and heat, four parallel workers; PC only, nothing run on the device).** Index and merge
 record: `docs/PHASE_9.md`; pieces `docs/PHASE_9_{EE,GS,IOP,HEAT}.md` (their paragraphs follow). All four branches are in main;
 after each merge the PC at the device's pace went through New Game to play (214.8-220.0 s) with the mix at 48 k of 48 k. Counted

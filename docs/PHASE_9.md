@@ -2,8 +2,8 @@
 
 Goal (user, 2026-11-12): frame time in Ollivanders from 55-67 ms to <= 40 ms (ideal 33), and 30+ minutes of play without the
 85 C stop at 1.416 GHz. Four workers took one area each in a git worktree of their own, with no device access; this page is the
-index and the merge record. **Everything here was measured on the PC. Nothing in this phase has run on the device: the device
-numbers are the user's next test.**
+index and the merge record. **The workers' numbers were measured on the PC. The device numbers are in "Device results" below
+(the user's two runs).**
 
 ## The four pieces
 
@@ -53,6 +53,31 @@ One branch at a time; after each: x86 build, sound check, New Game with no input
 runner identical to the main one without recompiling. WSL's git cannot read a worktree made by Windows git (git from Git Bash).
 Each worker's runtime change came back as a patch in `D:\ps2port-data\workers\`. `scripts/merge_keep_both.py` resolves the
 `NOTES.md` conflicts (both branches add a paragraph at the same place).
+
+## Device results (user's runs, 2026-11-13, binary `7a0e74dc`)
+
+Logs copied with `sh scripts/play_fetch.sh play-120126 play-121055` to `private/play/`. New Game, through the cutscenes, into
+Ollivanders.
+
+| Run | Clock | Length | Peak | 85 C stop | `[m5]` stats |
+|---|---|---|---|---|---|
+| `play-120126` | 1.416 GHz | 457 s | 73.3 C | none | on |
+| `play-121055` | 1.32 GHz | 426 s | 73.1 C | none | off |
+
+- **Frame time (run 1, `[m5f]`, 5 s averages, after the last cutscene, t=307-402):** 40-42 ms standing still (t=362-402; logic
+  24.9 ticks a second, 23.5 frames drawn), 44-66 ms while moving; mean of the twenty windows 49.2 ms. Before Phase 9: 55-67 ms.
+  The scenes are not matched view for view, so the gain is not a clean A/B. By the stop table (<= 50 ms) the work continues.
+  CPU in the standing part: GameThread 87 %, GsThread 76 %, GsDraw 55 %, main 33 %, IopThread 17 %.
+- **A slower part at the end (t=407-458): 84-109 ms a frame**, GsThread 79 %, GsDraw 61 %, GameThread 58 %; draw runs double
+  (15,672 a second against 7,800) and 9.9 target uploads a second. Which screen that was is not known (ask the user).
+- **Heat:** no stop in 7 minutes at either clock; 1.32 GHz reached the same peak (it started 5 C warmer). Both runs are too
+  short for the 30 minute target.
+- **Sound rate (run 1):** mixed at 47.5-48.5 k of 48 k frames a second through the whole run: real time on the device.
+- **Sound that stops (both runs):** `[spu] ... went round its stream ring 3 times without a refill: ended`, 8 times at
+  1.416 GHz (first at 190 s) and 11 times at 1.32 GHz (first at 42 s, then 77 s and 123 s, voices 0:0 and 0:1). The user heard
+  it as sound that sometimes does not start or stops at the start at 1.32 GHz, and good sound at 1.416 GHz. This is the
+  starved stream of Phase 8 (`STREAM.IRX` stops refilling; cause unknown), more frequent at the lower clock. Whether Phase 9's
+  IOP changes add to it is not known: the A/B is `sh scripts/play.sh 10 CPU_KHZ=1320000 PS2PORT_IOP_HLE=0`.
 
 ## For the user: the device test
 
